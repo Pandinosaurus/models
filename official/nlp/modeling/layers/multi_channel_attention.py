@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,12 +17,13 @@
 
 import math
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
+
 from official.modeling import tf_utils
 from official.nlp.modeling.layers import masked_softmax
 
 
-class VotingAttention(tf.keras.layers.Layer):
+class VotingAttention(tf_keras.layers.Layer):
   """Voting Attention layer.
 
   Args:
@@ -48,38 +49,40 @@ class VotingAttention(tf.keras.layers.Layer):
                kernel_constraint=None,
                bias_constraint=None,
                **kwargs):
-    super(VotingAttention, self).__init__(**kwargs)
+    super().__init__(**kwargs)
     self._num_heads = num_heads
     self._head_size = head_size
-    self._kernel_initializer = tf.keras.initializers.get(kernel_initializer)
-    self._bias_initializer = tf.keras.initializers.get(bias_initializer)
-    self._kernel_regularizer = tf.keras.regularizers.get(kernel_regularizer)
-    self._bias_regularizer = tf.keras.regularizers.get(bias_regularizer)
-    self._kernel_constraint = tf.keras.constraints.get(kernel_constraint)
-    self._bias_constraint = tf.keras.constraints.get(bias_constraint)
+    self._kernel_initializer = tf_keras.initializers.get(kernel_initializer)
+    self._bias_initializer = tf_keras.initializers.get(bias_initializer)
+    self._kernel_regularizer = tf_keras.regularizers.get(kernel_regularizer)
+    self._bias_regularizer = tf_keras.regularizers.get(bias_regularizer)
+    self._kernel_constraint = tf_keras.constraints.get(kernel_constraint)
+    self._bias_constraint = tf_keras.constraints.get(bias_constraint)
 
   def build(self, unused_input_shapes):
     common_kwargs = dict(
-        kernel_initializer=self._kernel_initializer,
-        bias_initializer=self._bias_initializer,
         kernel_regularizer=self._kernel_regularizer,
         bias_regularizer=self._bias_regularizer,
         activity_regularizer=self._activity_regularizer,
         kernel_constraint=self._kernel_constraint,
         bias_constraint=self._bias_constraint)
-    self._query_dense = tf.keras.layers.experimental.EinsumDense(
+    self._query_dense = tf_keras.layers.EinsumDense(
         "BAE,ENH->BANH",
         output_shape=(None, self._num_heads, self._head_size),
         bias_axes="NH",
         name="query",
+        kernel_initializer=tf_utils.clone_initializer(self._kernel_initializer),
+        bias_initializer=tf_utils.clone_initializer(self._bias_initializer),
         **common_kwargs)
-    self._key_dense = tf.keras.layers.experimental.EinsumDense(
+    self._key_dense = tf_keras.layers.EinsumDense(
         "BAE,ENH->BANH",
         output_shape=(None, self._num_heads, self._head_size),
         bias_axes="NH",
         name="key",
+        kernel_initializer=tf_utils.clone_initializer(self._kernel_initializer),
+        bias_initializer=tf_utils.clone_initializer(self._bias_initializer),
         **common_kwargs)
-    super(VotingAttention, self).build(unused_input_shapes)
+    super().build(unused_input_shapes)
 
   def call(self, encoder_outputs, doc_attention_mask):
     num_docs = tf_utils.get_shape_list(encoder_outputs, expected_rank=[4])[1]
@@ -100,7 +103,7 @@ class VotingAttention(tf.keras.layers.Layer):
     return tf.nn.softmax(doc_attention_probs + infadder)
 
 
-class MultiChannelAttention(tf.keras.layers.MultiHeadAttention):
+class MultiChannelAttention(tf_keras.layers.MultiHeadAttention):
   """Multi-channel Attention layer.
 
   Introduced in, [Generating Representative Headlines for News Stories
@@ -120,10 +123,10 @@ class MultiChannelAttention(tf.keras.layers.MultiHeadAttention):
   """
 
   def _build_attention(self, rank):
-    super(MultiChannelAttention, self)._build_attention(rank)
+    super()._build_attention(rank)  # pytype: disable=attribute-error  # typed-keras
     self._masked_softmax = masked_softmax.MaskedSoftmax(mask_expansion_axes=[2])
 
-  def call(self,
+  def call(self,  # pyrefly: ignore[bad-override]
            query,
            value,
            key=None,

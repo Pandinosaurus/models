@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,8 +16,9 @@
 
 from absl import logging
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
+from official.modeling import tf_utils
 from official.nlp.modeling import layers
 from official.nlp.modeling.layers import transformer_xl
 
@@ -365,7 +366,7 @@ def _compute_positional_encoding(
   return relative_position_encoding
 
 
-class RelativePositionEncoding(tf.keras.layers.Layer):
+class RelativePositionEncoding(tf_keras.layers.Layer):
   """Creates a relative positional encoding.
 
   This layer creates a relative positional encoding as described in
@@ -383,7 +384,7 @@ class RelativePositionEncoding(tf.keras.layers.Layer):
   """
 
   def __init__(self, hidden_size, **kwargs):
-    super(RelativePositionEncoding, self).__init__(**kwargs)
+    super().__init__(**kwargs)
     self._hidden_size = hidden_size
     self._inv_freq = 1.0 / (10000.0**(
         tf.range(0, self._hidden_size, 2.0) / self._hidden_size))
@@ -411,8 +412,8 @@ class RelativePositionEncoding(tf.keras.layers.Layer):
     return relative_position_encoding
 
 
-@tf.keras.utils.register_keras_serializable(package="Text")
-class XLNetBase(tf.keras.layers.Layer):
+@tf_keras.utils.register_keras_serializable(package="Text")
+class XLNetBase(tf_keras.layers.Layer):
   """Base XLNet model.
 
   Attributes:
@@ -475,7 +476,7 @@ class XLNetBase(tf.keras.layers.Layer):
                use_cls_mask=False,
                embedding_width=None,
                **kwargs):
-    super(XLNetBase, self).__init__(**kwargs)
+    super().__init__(**kwargs)
 
     self._vocab_size = vocab_size
     self._initializer = initializer
@@ -507,12 +508,12 @@ class XLNetBase(tf.keras.layers.Layer):
     self._embedding_layer = layers.OnDeviceEmbedding(
         vocab_size=self._vocab_size,
         embedding_width=embedding_width,
-        initializer=self._initializer,
+        initializer=tf_utils.clone_initializer(self._initializer),
         dtype=tf.float32,
         name="word_embedding")
-    self._dropout = tf.keras.layers.Dropout(rate=self._dropout_rate)
+    self._dropout = tf_keras.layers.Dropout(rate=self._dropout_rate)
 
-    self.embedding_dropout = tf.keras.layers.Dropout(rate=self._dropout_rate)
+    self.embedding_dropout = tf_keras.layers.Dropout(rate=self._dropout_rate)
     self.position_encoding = RelativePositionEncoding(self._hidden_size)
 
     self._transformer_xl = transformer_xl.TransformerXL(
@@ -573,7 +574,7 @@ class XLNetBase(tf.keras.layers.Layer):
         "embedding_width":
             self._embedding_width,
     }
-    base_config = super(XLNetBase, self).get_config()
+    base_config = super().get_config()
     return dict(list(base_config.items()) + list(config.items()))
 
   def get_embedding_lookup_table(self):
@@ -600,7 +601,7 @@ class XLNetBase(tf.keras.layers.Layer):
         "target_mapping": target_mapping,
         "masked_tokens": masked_tokens
     }
-    return super(XLNetBase, self).__call__(inputs, **kwargs)
+    return super().__call__(inputs, **kwargs)
 
   def call(self, inputs):
     """Implements call() for the layer."""
@@ -666,7 +667,7 @@ class XLNetBase(tf.keras.layers.Layer):
             shape=[self._num_layers, 2, self._num_attention_heads,
                    self._head_size],
             dtype=tf.float32,
-            initializer=self._initializer)
+            initializer=tf_utils.clone_initializer(self._initializer))
 
       segment_embedding = self._segment_embedding
       segment_matrix = _compute_segment_matrix(

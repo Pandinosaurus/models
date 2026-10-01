@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 import os
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 import yaml
 
 from official.modeling.hyperparams import params_dict
@@ -167,6 +167,7 @@ class ParamsDictTest(tf.test.TestCase):
             'a': 10
         }
     }, ['b == c'])
+    params.validate()
 
     # Raise error due to inconsistency
     with self.assertRaises(KeyError):
@@ -176,7 +177,7 @@ class ParamsDictTest(tf.test.TestCase):
     # Valid rule.
     params = params_dict.ParamsDict({'a': 1, 'c': {'a': 1}}, ['a == c.a'])
 
-    # Overridding violates the existing rule, raise error upon validate.
+    # Overriding violates the existing rule, raise error upon validate.
     params.override({'a': 11})
     with self.assertRaises(KeyError):
       params.validate()
@@ -197,6 +198,10 @@ class ParamsDictTest(tf.test.TestCase):
           }
       }, ['a == None', 'c.a == 1'])
       params.validate()
+
+    # Valid restrictions with inequality.
+    params = params_dict.ParamsDict({'a': 1}, ['a >= 1'])
+    params.validate()
 
 
 class ParamsDictIOTest(tf.test.TestCase):
@@ -220,7 +225,7 @@ class ParamsDictIOTest(tf.test.TestCase):
     params_dict.save_params_dict_to_yaml(params, output_yaml_file)
 
     with tf.io.gfile.GFile(output_yaml_file, 'r') as f:
-      params_d = yaml.load(f)
+      params_d = yaml.load(f, Loader=yaml.Loader)
       self.assertEqual(params.a, params_d['a'])
       self.assertEqual(params.b, params_d['b'])
       self.assertEqual(params.c.c1, params_d['c']['c1'])
@@ -321,6 +326,14 @@ class ParamsDictIOTest(tf.test.TestCase):
     self.assertEqual([3, 4], params.b.b2)
     self.assertEqual('hi, world', params.d.d1.d2)
     self.assertEqual('gs://test', params.e)
+    # Test different float formats
+    override_csv_string = 'b.b2=-1.e-3, d.d1.d2=+0.001, e=1e+3, a=-1.5E-3'
+    params = params_dict.override_params_dict(
+        params, override_csv_string, is_strict=True)
+    self.assertEqual(-1e-3, params.b.b2)
+    self.assertEqual(0.001, params.d.d1.d2)
+    self.assertEqual(1e3, params.e)
+    self.assertEqual(-1.5e-3, params.a)
 
   def test_override_params_dict_using_yaml_file(self):
     params = params_dict.ParamsDict({
@@ -356,7 +369,7 @@ class IOTest(tf.test.TestCase):
     csv_str = 'a=1,b=2,c=3'
     expected_output = {'a': 1, 'b': 2, 'c': 3}
     converted_csv_str = params_dict.nested_csv_str_to_json_str(csv_str)
-    converted_dict = yaml.load(converted_csv_str)
+    converted_dict = yaml.load(converted_csv_str, Loader=yaml.Loader)
     self.assertDictEqual(converted_dict, expected_output)
 
   def test_basic_nested_csv_str_to_json_str(self):
@@ -369,7 +382,7 @@ class IOTest(tf.test.TestCase):
     csv_str = 'a=1,b.b1=2,c.c1=3'
     expected_output = {'a': 1, 'b': {'b1': 2}, 'c': {'c1': 3}}
     converted_csv_str = params_dict.nested_csv_str_to_json_str(csv_str)
-    converted_dict = yaml.load(converted_csv_str)
+    converted_dict = yaml.load(converted_csv_str, Loader=yaml.Loader)
     self.assertDictEqual(converted_dict, expected_output)
 
   def test_complex_nested_csv_str_to_json_str(self):
@@ -382,13 +395,30 @@ class IOTest(tf.test.TestCase):
     csv_str = 'a.aa.aaa.aaaaa.a=1,a.a=2'
     expected_output = {'a': {'aa': {'aaa': {'aaaaa': {'a': 1}}}, 'a': 2}}
     converted_csv_str = params_dict.nested_csv_str_to_json_str(csv_str)
-    converted_dict = yaml.load(converted_csv_str)
+    converted_dict = yaml.load(converted_csv_str, Loader=yaml.Loader)
     self.assertDictEqual(converted_dict, expected_output)
+
+  def test_int_array_param_nested_csv_str_to_json_str(self):
+    csv_str = 'a.b[2]=3,a.b[0]=1,a.b[1]=2'
+    json_str = '{a : {b : [1, 2, 3]}}'
+    converted_csv_str = params_dict.nested_csv_str_to_json_str(csv_str)
+    self.assertEqual(converted_csv_str, json_str)
+
+  def test_float_array_param_nested_csv_str_to_json_str(self):
+    csv_str = 'a.b[1]=3.45,a.b[2]=1.32,a.b[0]=2.232'
+    json_str = '{a : {b : [2.232, 3.45, 1.32]}}'
+    converted_csv_str = params_dict.nested_csv_str_to_json_str(csv_str)
+    self.assertEqual(converted_csv_str, json_str)
+
+  def test_incomplete_array_param_nested_csv_str_to_json_str(self):
+    csv_str = 'a.b[0]=1,a.b[2]=2'
+    self.assertRaises(ValueError, params_dict.nested_csv_str_to_json_str,
+                      csv_str)
 
   def test_csv_str_load_supported_datatypes(self):
     csv_str = 'a=1,b=2.,c=[1,2,3],d=\'hello, there\',e=\"Hi.\"'
     converted_csv_str = params_dict.nested_csv_str_to_json_str(csv_str)
-    converted_dict = yaml.load(converted_csv_str)
+    converted_dict = yaml.load(converted_csv_str, Loader=yaml.Loader)
     self.assertEqual(converted_dict['a'], 1)
     self.assertEqual(converted_dict['b'], 2.)
     self.assertEqual(converted_dict['c'], [1, 2, 3])

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ from __future__ import print_function
 
 import unittest
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 from tensorflow.python.eager import context  # pylint: disable=ungrouped-imports
 from official.recommendation import constants as rconst
 from official.recommendation import ncf_common
@@ -38,11 +38,13 @@ class NcfTest(tf.test.TestCase):
     ncf_common.define_ncf_flags()
 
   def setUp(self):
+    super().setUp()
     self.top_k_old = rconst.TOP_K
     self.num_eval_negatives_old = rconst.NUM_EVAL_NEGATIVES
     rconst.NUM_EVAL_NEGATIVES = 2
 
   def tearDown(self):
+    super().tearDown()
     rconst.NUM_EVAL_NEGATIVES = self.num_eval_negatives_old
     rconst.TOP_K = self.top_k_old
 

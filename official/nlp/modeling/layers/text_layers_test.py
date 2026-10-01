@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,106 +18,11 @@ import os
 import tempfile
 
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
+from tensorflow import estimator as tf_estimator
 
 from sentencepiece import SentencePieceTrainer
 from official.nlp.modeling.layers import text_layers
-
-
-class RoundRobinTruncatorTest(tf.test.TestCase):
-
-  def _test_input(self, start, lengths):
-    return tf.ragged.constant([[start + 10 * j + i
-                                for i in range(length)]
-                               for j, length in enumerate(lengths)],
-                              dtype=tf.int32)
-
-  def test_single_segment(self):
-    # Single segment.
-    single_input = self._test_input(11, [4, 5, 6])
-    expected_single_output = tf.ragged.constant(
-        [[11, 12, 13, 14],
-         [21, 22, 23, 24, 25],
-         [31, 32, 33, 34, 35],  # Truncated.
-        ])
-
-    self.assertAllEqual(
-        expected_single_output,
-        text_layers.round_robin_truncate_inputs(single_input, limit=5))
-    # Test wrapping in a singleton list.
-    actual_single_list_output = text_layers.round_robin_truncate_inputs(
-        [single_input], limit=5)
-    self.assertIsInstance(actual_single_list_output, list)
-    self.assertAllEqual(expected_single_output, actual_single_list_output[0])
-
-  def test_two_segments(self):
-    input_a = self._test_input(111, [1, 2, 2, 3, 4, 5])
-    input_b = self._test_input(211, [1, 3, 4, 2, 2, 5])
-    expected_a = tf.ragged.constant(
-        [[111],
-         [121, 122],
-         [131, 132],
-         [141, 142, 143],
-         [151, 152, 153],  # Truncated.
-         [161, 162, 163],  # Truncated.
-        ])
-    expected_b = tf.ragged.constant(
-        [[211],
-         [221, 222, 223],
-         [231, 232, 233],  # Truncated.
-         [241, 242],
-         [251, 252],
-         [261, 262],  # Truncated.
-        ])
-    actual_a, actual_b = text_layers.round_robin_truncate_inputs(
-        [input_a, input_b], limit=5)
-    self.assertAllEqual(expected_a, actual_a)
-    self.assertAllEqual(expected_b, actual_b)
-
-  def test_three_segments(self):
-    input_a = self._test_input(111, [1, 2, 2, 3, 4, 5, 1])
-    input_b = self._test_input(211, [1, 3, 4, 2, 2, 5, 8])
-    input_c = self._test_input(311, [1, 3, 4, 2, 2, 5, 10])
-    seg_limit = 8
-    expected_a = tf.ragged.constant([
-        [111],
-        [121, 122],
-        [131, 132],
-        [141, 142, 143],
-        [151, 152, 153, 154],
-        [161, 162, 163],  # Truncated
-        [171]
-    ])
-    expected_b = tf.ragged.constant([
-        [211],
-        [221, 222, 223],
-        [231, 232, 233],  # Truncated
-        [241, 242],
-        [251, 252],
-        [261, 262, 263],  # Truncated
-        [271, 272, 273, 274]  # Truncated
-    ])
-    expected_c = tf.ragged.constant([
-        [311],
-        [321, 322, 323],
-        [331, 332, 333],  # Truncated
-        [341, 342],
-        [351, 352],
-        [361, 362],  # Truncated
-        [371, 372, 373]  # Truncated
-    ])
-    actual_a, actual_b, actual_c = text_layers.round_robin_truncate_inputs(
-        [input_a, input_b, input_c], limit=seg_limit)
-    self.assertAllEqual(expected_a, actual_a)
-    self.assertAllEqual(expected_b, actual_b)
-    self.assertAllEqual(expected_c, actual_c)
-    input_cap = tf.math.reduce_sum(
-        tf.stack([rt.row_lengths() for rt in [input_a, input_b, input_c]]),
-        axis=0)
-    per_example_usage = tf.math.reduce_sum(
-        tf.stack([rt.row_lengths() for rt in [actual_a, actual_b, actual_c]]),
-        axis=0)
-    self.assertTrue(all(per_example_usage <= tf.minimum(seg_limit, input_cap)))
 
 
 # This test covers the in-process behavior of a BertTokenizer layer.
@@ -198,7 +103,7 @@ class BertTokenizerTest(tf.test.TestCase):
       with tf.init_scope():
         self.assertFalse(tf.executing_eagerly())
       # Build a preprocessing Model.
-      sentences = tf.keras.layers.Input(shape=[], dtype=tf.string)
+      sentences = tf_keras.layers.Input(shape=[], dtype=tf.string)
       bert_tokenizer = text_layers.BertTokenizer(
           vocab_file=vocab_file, lower_case=True)
       special_tokens_dict = bert_tokenizer.get_special_tokens_dict()
@@ -207,7 +112,7 @@ class BertTokenizerTest(tf.test.TestCase):
       tokens = bert_tokenizer(sentences)
       packed_inputs = text_layers.BertPackInputs(
           4, special_tokens_dict=special_tokens_dict)(tokens)
-      preprocessing = tf.keras.Model(sentences, packed_inputs)
+      preprocessing = tf_keras.Model(sentences, packed_inputs)
       # Map the dataset.
       ds = tf.data.Dataset.from_tensors(
           (tf.constant(["abc", "DEF"]), tf.constant([0, 1])))
@@ -216,10 +121,10 @@ class BertTokenizerTest(tf.test.TestCase):
 
     def model_fn(features, labels, mode):
       del labels  # Unused.
-      return tf.estimator.EstimatorSpec(mode=mode,
+      return tf_estimator.EstimatorSpec(mode=mode,
                                         predictions=features["input_word_ids"])
 
-    estimator = tf.estimator.Estimator(model_fn=model_fn)
+    estimator = tf_estimator.Estimator(model_fn=model_fn)
     outputs = list(estimator.predict(input_fn))
     self.assertAllEqual(outputs, np.array([[2, 6, 3, 0],
                                            [2, 4, 5, 3]]))
@@ -309,7 +214,7 @@ class SentencepieceTokenizerTest(tf.test.TestCase):
       with tf.init_scope():
         self.assertFalse(tf.executing_eagerly())
       # Build a preprocessing Model.
-      sentences = tf.keras.layers.Input(shape=[], dtype=tf.string)
+      sentences = tf_keras.layers.Input(shape=[], dtype=tf.string)
       sentencepiece_tokenizer = text_layers.SentencepieceTokenizer(
           model_file_path=self._spm_path, lower_case=True, nbest_size=0)
       special_tokens_dict = sentencepiece_tokenizer.get_special_tokens_dict()
@@ -318,7 +223,7 @@ class SentencepieceTokenizerTest(tf.test.TestCase):
       tokens = sentencepiece_tokenizer(sentences)
       packed_inputs = text_layers.BertPackInputs(
           4, special_tokens_dict=special_tokens_dict)(tokens)
-      preprocessing = tf.keras.Model(sentences, packed_inputs)
+      preprocessing = tf_keras.Model(sentences, packed_inputs)
       # Map the dataset.
       ds = tf.data.Dataset.from_tensors(
           (tf.constant(["abc", "DEF"]), tf.constant([0, 1])))
@@ -327,10 +232,10 @@ class SentencepieceTokenizerTest(tf.test.TestCase):
 
     def model_fn(features, labels, mode):
       del labels  # Unused.
-      return tf.estimator.EstimatorSpec(mode=mode,
+      return tf_estimator.EstimatorSpec(mode=mode,
                                         predictions=features["input_word_ids"])
 
-    estimator = tf.estimator.Estimator(model_fn=model_fn)
+    estimator = tf_estimator.Estimator(model_fn=model_fn)
     outputs = list(estimator.predict(input_fn))
     self.assertAllEqual(outputs, np.array([[2, 8, 3, 0],
                                            [2, 12, 3, 0]]))
@@ -389,9 +294,9 @@ class SentencepieceTokenizerTest(tf.test.TestCase):
   def test_saving(self):
     sentencepiece_tokenizer = text_layers.SentencepieceTokenizer(
         model_file_path=self._spm_path, lower_case=True, nbest_size=0)
-    inputs = tf.keras.layers.Input([], dtype=tf.string)
+    inputs = tf_keras.layers.Input([], dtype=tf.string)
     outputs = sentencepiece_tokenizer(inputs)
-    model = tf.keras.Model(inputs, outputs)
+    model = tf_keras.Model(inputs, outputs)
     export_path = tempfile.mkdtemp(dir=self.get_temp_dir())
     model.save(export_path, signatures={})
 
@@ -536,6 +441,110 @@ class BertPackInputsTest(tf.test.TestCase):
         bert_inputs["input_word_ids"],
         tf.constant([[1001, 11, 12, 13, 1002, 999, 999, 999, 999, 999],
                      [1001, 21, 22, 23, 24, 25, 26, 27, 28, 1002]]))
+
+
+# This test covers the in-process behavior of FastWordpieceBertTokenizer layer.
+class FastWordPieceBertTokenizerTest(tf.test.TestCase):
+
+  def _make_vocab_file(self, vocab, filename="vocab.txt"):
+    path = os.path.join(
+        tempfile.mkdtemp(dir=self.get_temp_dir()),  # New subdir each time.
+        filename)
+    with tf.io.gfile.GFile(path, "w") as f:
+      f.write("\n".join(vocab + [""]))
+    return path
+
+  def test_uncased(self):
+    vocab_file = self._make_vocab_file(
+        ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "d", "##ef", "abc", "xy"])
+    bert_tokenize = text_layers.FastWordpieceBertTokenizer(
+        vocab_file=vocab_file, lower_case=True)
+    inputs = tf.constant(["abc def", "ABC DEF d"])
+    token_ids = bert_tokenize(inputs)
+    self.assertAllEqual(token_ids, tf.ragged.constant([[[6], [4, 5]],
+                                                       [[6], [4, 5], [4]]]))
+    bert_tokenize.tokenize_with_offsets = True
+    token_ids_2, start_offsets, limit_offsets = bert_tokenize(inputs)
+    self.assertAllEqual(token_ids, token_ids_2)
+    self.assertAllEqual(start_offsets, tf.ragged.constant([[[0], [4, 5]],
+                                                           [[0], [4, 5], [8]]]))
+    self.assertAllEqual(limit_offsets, tf.ragged.constant([[[3], [5, 7]],
+                                                           [[3], [5, 7], [9]]]))
+    self.assertEqual(bert_tokenize.vocab_size, 8)
+
+  # Repeat the above and test that case matters with lower_case=False.
+  def test_cased(self):
+    vocab_file = self._make_vocab_file(
+        ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "d", "##ef", "abc", "ABC"])
+    bert_tokenize = text_layers.FastWordpieceBertTokenizer(
+        vocab_file=vocab_file, lower_case=False, tokenize_with_offsets=True)
+    inputs = tf.constant(["abc def", "ABC DEF"])
+    token_ids, start_offsets, limit_offsets = bert_tokenize(inputs)
+    self.assertAllEqual(token_ids, tf.ragged.constant([[[6], [4, 5]],
+                                                       [[7], [1]]]))
+    self.assertAllEqual(start_offsets, tf.ragged.constant([[[0], [4, 5]],
+                                                           [[0], [4]]]))
+    self.assertAllEqual(limit_offsets, tf.ragged.constant([[[3], [5, 7]],
+                                                           [[3], [7]]]))
+
+  def test_special_tokens_complete(self):
+    vocab_file = self._make_vocab_file(
+        ["foo", "[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "xy"])
+    bert_tokenize = text_layers.FastWordpieceBertTokenizer(
+        vocab_file=vocab_file, lower_case=True)
+    self.assertDictEqual(bert_tokenize.get_special_tokens_dict(),
+                         dict(padding_id=1,
+                              start_of_sequence_id=3,
+                              end_of_segment_id=4,
+                              mask_id=5,
+                              vocab_size=7))
+
+  def test_special_tokens_partial(self):
+    # [UNK] token is required by fast wordpiece tokenizer.
+    vocab_file = self._make_vocab_file(
+        ["[PAD]", "[CLS]", "[SEP]", "[UNK]"])
+    bert_tokenize = text_layers.FastWordpieceBertTokenizer(
+        vocab_file=vocab_file, lower_case=True)
+    self.assertDictEqual(bert_tokenize.get_special_tokens_dict(),
+                         dict(padding_id=0,
+                              start_of_sequence_id=1,
+                              end_of_segment_id=2,
+                              vocab_size=4))  # No mask_id,
+
+  def test_special_tokens_in_estimator(self):
+    """Tests getting special tokens without an Eager init context."""
+    vocab_file = self._make_vocab_file(
+        ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "d", "##ef", "abc", "xy"])
+
+    def input_fn():
+      with tf.init_scope():
+        self.assertFalse(tf.executing_eagerly())
+      # Build a preprocessing Model.
+      sentences = tf_keras.layers.Input(shape=[], dtype=tf.string)
+      bert_tokenizer = text_layers.FastWordpieceBertTokenizer(
+          vocab_file=vocab_file, lower_case=True)
+      special_tokens_dict = bert_tokenizer.get_special_tokens_dict()
+      for k, v in special_tokens_dict.items():
+        self.assertIsInstance(v, int, "Unexpected type for {}".format(k))
+      tokens = bert_tokenizer(sentences)
+      packed_inputs = text_layers.BertPackInputs(
+          4, special_tokens_dict=special_tokens_dict)(tokens)
+      preprocessing = tf_keras.Model(sentences, packed_inputs)
+      # Map the dataset.
+      ds = tf.data.Dataset.from_tensors(
+          (tf.constant(["abc", "DEF"]), tf.constant([0, 1])))
+      ds = ds.map(lambda features, labels: (preprocessing(features), labels))
+      return ds
+
+    def model_fn(features, labels, mode):
+      del labels  # Unused.
+      return tf_estimator.EstimatorSpec(mode=mode,
+                                        predictions=features["input_word_ids"])
+
+    estimator = tf_estimator.Estimator(model_fn=model_fn)
+    outputs = list(estimator.predict(input_fn))
+    self.assertAllEqual(outputs, np.array([[2, 6, 3, 0],
+                                           [2, 4, 5, 3]]))
 
 
 if __name__ == "__main__":

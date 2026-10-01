@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,11 +26,7 @@ def register_config_factory(name):
   return registry.register(_REGISTERED_CONFIGS, name)
 
 
-def get_exp_config_creater(exp_name: str):
-  """Looks up ExperimentConfig factory methods."""
-  exp_creater = registry.lookup(_REGISTERED_CONFIGS, exp_name)
-  return exp_creater
-
-
 def get_exp_config(exp_name: str) -> cfg.ExperimentConfig:
-  return get_exp_config_creater(exp_name)()
+  """Looks up the `ExperimentConfig` according to the `exp_name`."""
+  exp_creater = registry.lookup(_REGISTERED_CONFIGS, exp_name)
+  return exp_creater()

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,19 +16,19 @@
 
 Model paper: https://arxiv.org/pdf/1706.03762.pdf
 """
+import inspect
 import math
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
+
 from official.modeling import tf_utils
-from official.nlp import keras_nlp
 from official.nlp.modeling import layers
 from official.nlp.modeling.ops import beam_search
 
 EOS_ID = 1
 
 
-@tf.keras.utils.register_keras_serializable(package="Text")
-class Seq2SeqTransformer(tf.keras.Model):
+class Seq2SeqTransformer(tf_keras.Model):
   """Transformer model with Keras.
 
   Implemented as described in: https://arxiv.org/pdf/1706.03762.pdf
@@ -79,7 +79,7 @@ class Seq2SeqTransformer(tf.keras.Model):
     self._beam_size = beam_size
     self._alpha = alpha
     self._eos_id = eos_id
-    self.embedding_lookup = keras_nlp.layers.OnDeviceEmbedding(
+    self.embedding_lookup = layers.OnDeviceEmbedding(
         vocab_size=self._vocab_size,
         embedding_width=self._embedding_width,
         initializer=tf.random_normal_initializer(
@@ -89,8 +89,8 @@ class Seq2SeqTransformer(tf.keras.Model):
     self.decoder_layer = decoder_layer
     self.position_embedding = layers.RelativePositionEmbedding(
         hidden_size=self._embedding_width)
-    self.encoder_dropout = tf.keras.layers.Dropout(rate=self._dropout_rate)
-    self.decoder_dropout = tf.keras.layers.Dropout(rate=self._dropout_rate)
+    self.encoder_dropout = tf_keras.layers.Dropout(rate=self._dropout_rate)
+    self.decoder_dropout = tf_keras.layers.Dropout(rate=self._dropout_rate)
 
   def get_config(self):
     config = {
@@ -104,31 +104,66 @@ class Seq2SeqTransformer(tf.keras.Model):
         "beam_size": self._beam_size,
         "alpha": self._alpha,
         "encoder_layer": self.encoder_layer,
-        "decoder_layer": self.decoder_layer
+        "decoder_layer": self.decoder_layer,
     }
     base_config = super(Seq2SeqTransformer, self).get_config()
     return dict(list(base_config.items()) + list(config.items()))
 
   def _embedding_linear(self, embedding_matrix, x):
     """Uses embeddings as linear transformation weights."""
+    embedding_matrix = tf.cast(embedding_matrix, dtype=self.compute_dtype)
+    x = tf.cast(x, dtype=self.compute_dtype)
     batch_size = tf.shape(x)[0]
     length = tf.shape(x)[1]
     hidden_size = tf.shape(x)[2]
     vocab_size = tf.shape(embedding_matrix)[0]
 
     x = tf.reshape(x, [-1, hidden_size])
-    logits = tf.matmul(x, tf.cast(embedding_matrix, x.dtype), transpose_b=True)
+    logits = tf.matmul(x, embedding_matrix, transpose_b=True)
 
     return tf.reshape(logits, [batch_size, length, vocab_size])
 
-  def call(self, inputs):
+  def _parse_inputs(self, inputs):
+    """Parses the `call` inputs and returns an uniformed output."""
+    sources = inputs.get("inputs", None)
+    input_mask = inputs.get("input_masks", None)
+    embedded = inputs.get("embedded_inputs", None)
+
+    if sources is None and embedded is not None:
+      embedded_inputs = embedded
+      boolean_mask = input_mask
+      input_shape = tf_utils.get_shape_list(embedded, expected_rank=3)
+      source_dtype = embedded.dtype
+    elif sources is not None:
+      embedded_inputs = self.embedding_lookup(sources)
+      boolean_mask = tf.not_equal(sources, 0)
+      input_shape = tf_utils.get_shape_list(sources, expected_rank=2)
+      source_dtype = sources.dtype
+    else:
+      raise KeyError(
+          "The call method expects either `inputs` or `embedded_inputs` and "
+          "`input_masks` as input features.")
+
+    return embedded_inputs, boolean_mask, input_shape, source_dtype
+
+  def call(self, inputs):  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
     """Calculate target logits or inferred target sequences.
 
     Args:
       inputs: a dictionary of tensors.
-        Feature `inputs`: int tensor with shape `[batch_size, input_length]`.
+        Feature `inputs` (optional): int tensor with shape
+          `[batch_size, input_length]`.
+        Feature `embedded_inputs` (optional): float tensor with shape
+          `[batch_size, input_length, embedding_width]`.
         Feature `targets` (optional): None or int tensor with shape
           `[batch_size, target_length]`.
+        Feature `input_masks` (optional): When providing the `embedded_inputs`,
+          the dictionary must provide a boolean mask marking the filled time
+          steps. The shape of the tensor is `[batch_size, input_length]`.
+        Either `inputs` or `embedded_inputs` and `input_masks` must be present
+        in the input dictionary. In the second case the projection of the
+        integer tokens to the transformer embedding space is skipped and
+        `input_masks` is expected to be present.
 
     Returns:
       If targets is defined, then return logits for each word in the target
@@ -143,21 +178,19 @@ class Seq2SeqTransformer(tf.keras.Model):
     Raises:
       NotImplementedError: If try to use padded decode method on CPU/GPUs.
     """
-    sources = inputs["inputs"]
-    targets = inputs.get("targets", None)
     # Prepare inputs to the layer stack by adding positional encodings and
     # applying dropout.
-    embedded_inputs = self.embedding_lookup(sources)
-    embedding_mask = tf.cast(tf.not_equal(sources, 0), embedded_inputs.dtype)
+    targets = inputs.get("targets", None)
+    (embedded_inputs, boolean_mask,
+     input_shape, source_dtype) = self._parse_inputs(inputs)
+    embedding_mask = tf.cast(boolean_mask, embedded_inputs.dtype)
     embedded_inputs *= tf.expand_dims(embedding_mask, -1)
     # Attention_mask generation.
-    input_shape = tf_utils.get_shape_list(sources, expected_rank=2)
     attention_mask = tf.cast(
-        tf.reshape(
-            tf.not_equal(sources, 0), [input_shape[0], 1, input_shape[1]]),
-        dtype=sources.dtype)
+        tf.reshape(boolean_mask, [input_shape[0], 1, input_shape[1]]),
+        dtype=source_dtype)
     broadcast_ones = tf.ones(
-        shape=[input_shape[0], input_shape[1], 1], dtype=sources.dtype)
+        shape=[input_shape[0], input_shape[1], 1], dtype=source_dtype)
     attention_mask = broadcast_ones * attention_mask
 
     pos_encoding = self.position_embedding(embedded_inputs)
@@ -166,7 +199,7 @@ class Seq2SeqTransformer(tf.keras.Model):
 
     encoder_inputs = self.encoder_dropout(encoder_inputs)
 
-    encoder_outputs = self.encoder_layer(
+    encoder_outputs = self.encoder_layer(  # pyrefly: ignore[not-callable]
         encoder_inputs, attention_mask=attention_mask)
 
     if targets is None:
@@ -183,7 +216,7 @@ class Seq2SeqTransformer(tf.keras.Model):
 
       # Create cache storing decoder attention values for each layer.
       init_decode_length = (max_decode_length if self._padded_decode else 0)
-      num_heads = self.decoder_layer.num_attention_heads
+      num_heads = self.decoder_layer.num_attention_heads  # pyrefly: ignore[missing-attribute]
       dim_per_head = self._embedding_width // num_heads
 
       # Cache dtype needs to match beam_search dtype.
@@ -198,15 +231,14 @@ class Seq2SeqTransformer(tf.keras.Model):
                   tf.zeros(
                       [batch_size, init_decode_length, num_heads, dim_per_head],
                       dtype=self.compute_dtype)
-          } for layer in range(self.decoder_layer.num_layers)
+          } for layer in range(self.decoder_layer.num_layers)  # pyrefly: ignore[missing-attribute]
       }
       # pylint: enable=g-complex-comprehension
 
       # Add encoder output and attention bias to the cache.
       encoder_outputs = tf.cast(encoder_outputs, dtype=self.compute_dtype)
       attention_mask = tf.cast(
-          tf.reshape(
-              tf.not_equal(sources, 0), [input_shape[0], 1, input_shape[1]]),
+          tf.reshape(boolean_mask, [input_shape[0], 1, input_shape[1]]),
           dtype=self.compute_dtype)
       cache["encoder_outputs"] = encoder_outputs
       cache["encoder_decoder_attention_mask"] = attention_mask
@@ -230,11 +262,9 @@ class Seq2SeqTransformer(tf.keras.Model):
 
       return {"outputs": top_decoded_ids, "scores": top_scores}
 
-    decoder_inputs = self.embedding_lookup(targets)
-    embedding_mask = tf.cast(tf.not_equal(targets, 0), decoder_inputs.dtype)
-    decoder_inputs *= tf.expand_dims(embedding_mask, -1)
     # Shift targets to the right, and remove the last element
-    decoder_inputs = tf.pad(decoder_inputs, [[0, 0], [1, 0], [0, 0]])[:, :-1, :]
+    targets = tf.pad(targets, [[0, 0], [1, 0]])[:, :-1]
+    decoder_inputs = self.embedding_lookup(targets)
     length = tf.shape(decoder_inputs)[1]
     pos_encoding = self.position_embedding(decoder_inputs)
     pos_encoding = tf.cast(pos_encoding, embedded_inputs.dtype)
@@ -251,10 +281,10 @@ class Seq2SeqTransformer(tf.keras.Model):
     self_attention_mask = tf.tile(self_attention_mask, [batch_size, 1, 1])
 
     attention_mask = tf.cast(
-        tf.expand_dims(tf.not_equal(sources, 0), axis=1), dtype=sources.dtype)
+        tf.expand_dims(boolean_mask, axis=1), dtype=source_dtype)
     attention_mask = tf.tile(attention_mask, [1, decoder_length, 1])
 
-    outputs = self.decoder_layer(
+    outputs = self.decoder_layer(  # pyrefly: ignore[not-callable]
         decoder_inputs,
         encoder_outputs,
         self_attention_mask=self_attention_mask,
@@ -295,12 +325,7 @@ class Seq2SeqTransformer(tf.keras.Model):
       decoder_input = ids[:, -1:]
 
       # Preprocess decoder input by getting embeddings and adding timing signal.
-      # decoder_input = self.embedding_softmax_layer(decoder_input)
-      source_decoder_input = decoder_input
       decoder_input = self.embedding_lookup(decoder_input)
-      embedding_mask = tf.cast(
-          tf.not_equal(source_decoder_input, 0), decoder_input.dtype)
-      decoder_input *= tf.expand_dims(embedding_mask, -1)
       decoder_input += timing_signal[i]
       if self._padded_decode:
         # indexing does not work on TPU.
@@ -317,7 +342,7 @@ class Seq2SeqTransformer(tf.keras.Model):
       attention_mask = cache.get("encoder_decoder_attention_mask")
       attention_mask = tf.tile(attention_mask, [1, decoder_length, 1])
 
-      decoder_outputs = self.decoder_layer(
+      decoder_outputs = self.decoder_layer(  # pyrefly: ignore[not-callable]
           decoder_input,
           cache.get("encoder_outputs"),
           self_attention_mask=self_attention_mask,
@@ -334,7 +359,7 @@ class Seq2SeqTransformer(tf.keras.Model):
     return symbols_to_logits_fn
 
 
-class TransformerEncoder(tf.keras.layers.Layer):
+class TransformerEncoder(tf_keras.layers.Layer):
   """Transformer encoder.
 
   Transformer encoder is made up of N identical layers. Each layer is composed
@@ -371,7 +396,7 @@ class TransformerEncoder(tf.keras.layers.Layer):
         layers is normalized.
       norm_epsilon: Epsilon value to initialize normalization layers.
       intermediate_dropout: Dropout probability for intermediate_dropout_layer.
-      **kwargs: key word arguemnts passed to tf.keras.layers.Layer.
+      **kwargs: key word arguemnts passed to tf_keras.layers.Layer.
     """
 
     super(TransformerEncoder, self).__init__(**kwargs)
@@ -391,7 +416,7 @@ class TransformerEncoder(tf.keras.layers.Layer):
     self.encoder_layers = []
     for i in range(self.num_layers):
       self.encoder_layers.append(
-          keras_nlp.layers.TransformerEncoderBlock(
+          layers.TransformerEncoderBlock(
               num_attention_heads=self.num_attention_heads,
               inner_dim=self._intermediate_size,
               inner_activation=self._activation,
@@ -403,7 +428,7 @@ class TransformerEncoder(tf.keras.layers.Layer):
               inner_dropout=self._intermediate_dropout,
               attention_initializer=attention_initializer(input_shape[2]),
               name=("layer_%d" % i)))
-    self.output_normalization = tf.keras.layers.LayerNormalization(
+    self.output_normalization = tf_keras.layers.LayerNormalization(
         epsilon=self._norm_epsilon, dtype="float32")
     super(TransformerEncoder, self).build(input_shape)
 
@@ -446,7 +471,7 @@ class TransformerEncoder(tf.keras.layers.Layer):
     return output_tensor
 
 
-class TransformerDecoder(tf.keras.layers.Layer):
+class TransformerDecoder(tf_keras.layers.Layer):
   """Transformer decoder.
 
   Like the encoder, the decoder is made up of N identical layers.
@@ -468,6 +493,8 @@ class TransformerDecoder(tf.keras.layers.Layer):
                norm_first=True,
                norm_epsilon=1e-6,
                intermediate_dropout=0.0,
+               self_attention_cls=None,
+               cross_attention_cls=None,
                **kwargs):
     """Initialize a Transformer decoder.
 
@@ -485,7 +512,11 @@ class TransformerDecoder(tf.keras.layers.Layer):
         layers is normalized.
       norm_epsilon: Epsilon value to initialize normalization layers.
       intermediate_dropout: Dropout probability for intermediate_dropout_layer.
-      **kwargs: key word arguemnts passed to tf.keras.layers.Layer.
+      self_attention_cls: An optional class to use for self attention
+        or a function that provides the class per layer.
+      cross_attention_cls: An optional class to use for cross attention
+        or a function that provides the class per layer.
+      **kwargs: key word arguemnts passed to tf_keras.layers.Layer.
     """
     super(TransformerDecoder, self).__init__(**kwargs)
     self.num_layers = num_layers
@@ -498,11 +529,26 @@ class TransformerDecoder(tf.keras.layers.Layer):
     self._norm_first = norm_first
     self._norm_epsilon = norm_epsilon
     self._intermediate_dropout = intermediate_dropout
+    self._self_attention_cls = self_attention_cls
+    self._cross_attention_cls = cross_attention_cls
 
   def build(self, input_shape):
     """Implements build() for the layer."""
+
+    def _select_attention_cls(attention_cls, index):
+      cls = None
+      if attention_cls is not None:
+        cls = (
+            attention_cls(index)
+            if inspect.isfunction(attention_cls)
+            else attention_cls
+        )
+      return cls
+
     self.decoder_layers = []
     for i in range(self.num_layers):
+      self_attention_cls = _select_attention_cls(self._self_attention_cls, i)
+      cross_attention_cls = _select_attention_cls(self._cross_attention_cls, i)
       self.decoder_layers.append(
           layers.TransformerDecoderBlock(
               num_attention_heads=self.num_attention_heads,
@@ -515,8 +561,10 @@ class TransformerDecoder(tf.keras.layers.Layer):
               norm_epsilon=self._norm_epsilon,
               intermediate_dropout=self._intermediate_dropout,
               attention_initializer=attention_initializer(input_shape[2]),
-              name=("layer_%d" % i)))
-    self.output_normalization = tf.keras.layers.LayerNormalization(
+              name=("layer_%d" % i),
+              self_attention_cls=self_attention_cls,
+              cross_attention_cls=cross_attention_cls))
+    self.output_normalization = tf_keras.layers.LayerNormalization(
         epsilon=1e-6, dtype="float32")
     super(TransformerDecoder, self).build(input_shape)
 
@@ -531,7 +579,9 @@ class TransformerDecoder(tf.keras.layers.Layer):
         "use_bias": self._use_bias,
         "norm_first": self._norm_first,
         "norm_epsilon": self._norm_epsilon,
-        "intermediate_dropout": self._intermediate_dropout
+        "intermediate_dropout": self._intermediate_dropout,
+        "self_attention_cls": self._self_attention_cls,
+        "cross_attention_cls": self._cross_attention_cls,
     }
     base_config = super(TransformerDecoder, self).get_config()
     return dict(list(base_config.items()) + list(config.items()))
@@ -542,7 +592,8 @@ class TransformerDecoder(tf.keras.layers.Layer):
            self_attention_mask=None,
            cross_attention_mask=None,
            cache=None,
-           decode_loop_step=None):
+           decode_loop_step=None,
+           return_all_decoder_outputs=False):
     """Return the output of the decoder layer stacks.
 
     Args:
@@ -559,6 +610,9 @@ class TransformerDecoder(tf.keras.layers.Layer):
                      ...}
       decode_loop_step: An integer, the step number of the decoding loop. Used
         only for autoregressive inference on TPU.
+      return_all_decoder_outputs: Return all decoder layer outputs.
+        Note that the outputs are layer normed.
+        This is useful when introducing per layer auxiliary loss.
 
     Returns:
       Output of decoder.
@@ -566,6 +620,7 @@ class TransformerDecoder(tf.keras.layers.Layer):
     """
 
     output_tensor = target
+    decoder_outputs = []
     for layer_idx in range(self.num_layers):
       transformer_inputs = [
           output_tensor, memory, cross_attention_mask, self_attention_mask
@@ -579,11 +634,17 @@ class TransformerDecoder(tf.keras.layers.Layer):
             transformer_inputs,
             cache=cache[cache_layer_idx],
             decode_loop_step=decode_loop_step)
-    return self.output_normalization(output_tensor)
+      if return_all_decoder_outputs:
+        decoder_outputs.append(self.output_normalization(output_tensor))
+
+    if return_all_decoder_outputs:
+      return decoder_outputs
+    else:
+      return self.output_normalization(output_tensor)
 
 
 def attention_initializer(hidden_size):
   """Initializer for attention layers in Seq2SeqTransformer."""
   hidden_size = int(hidden_size)
   limit = math.sqrt(6.0 / (hidden_size + hidden_size))
-  return tf.keras.initializers.RandomUniform(minval=-limit, maxval=limit)
+  return tf_keras.initializers.RandomUniform(minval=-limit, maxval=limit)

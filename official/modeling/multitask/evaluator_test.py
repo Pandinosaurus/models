@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,14 +15,13 @@
 """Tests for multitask.evaluator."""
 from absl.testing import parameterized
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from tensorflow.python.distribute import combinations
 from tensorflow.python.distribute import strategy_combinations
 from official.core import base_task
 from official.core import config_definitions as cfg
 from official.modeling.multitask import evaluator
-from official.modeling.multitask import multitask
 
 
 def all_strategy_combinations():
@@ -36,11 +35,11 @@ def all_strategy_combinations():
   )
 
 
-class MockModel(tf.keras.Model):
+class MockModel(tf_keras.Model):
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    self.dense = tf.keras.layers.Dense(1)
+    self.dense = tf_keras.layers.Dense(1)
 
   def call(self, inputs):
     print(inputs, type(inputs))
@@ -56,7 +55,7 @@ class MockTask(base_task.Task):
 
   def build_metrics(self, training: bool = True):
     del training
-    return [tf.keras.metrics.Accuracy(name="acc")]
+    return [tf_keras.metrics.Accuracy(name="acc")]
 
   def build_inputs(self, params):
 
@@ -74,7 +73,7 @@ class MockTask(base_task.Task):
         generate_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
     return dataset.prefetch(buffer_size=1).batch(2, drop_remainder=True)
 
-  def validation_step(self, inputs, model: tf.keras.Model, metrics=None):
+  def validation_step(self, inputs, model: tf_keras.Model, metrics=None):
     logs = super().validation_step(inputs, model, metrics)
     logs["counter"] = tf.ones((1,), dtype=tf.float32)
     return logs
@@ -89,9 +88,7 @@ class MockTask(base_task.Task):
           np.concatenate([np.expand_dims(v.numpy(), axis=0) for v in value]))
     return state
 
-  def reduce_aggregated_logs(self,
-                             aggregated_logs,
-                             global_step=None):
+  def reduce_aggregated_logs(self, aggregated_logs, global_step=None):
     for k, v in aggregated_logs.items():
       aggregated_logs[k] = np.sum(np.stack(v, axis=0))
     return aggregated_logs
@@ -106,10 +103,9 @@ class EvaluatorTest(tf.test.TestCase, parameterized.TestCase):
           MockTask(params=cfg.TaskConfig(), name="bar"),
           MockTask(params=cfg.TaskConfig(), name="foo")
       ]
-      test_multitask = multitask.MultiTask(tasks=tasks)
       model = MockModel()
       test_evaluator = evaluator.MultiTaskEvaluator(
-          task=test_multitask, model=model)
+          eval_tasks=tasks, model=model)
       results = test_evaluator.evaluate(tf.convert_to_tensor(1, dtype=tf.int32))
     self.assertContainsSubset(["validation_loss", "acc"], results["bar"].keys())
     self.assertContainsSubset(["validation_loss", "acc"], results["foo"].keys())
@@ -123,10 +119,9 @@ class EvaluatorTest(tf.test.TestCase, parameterized.TestCase):
           MockTask(params=cfg.TaskConfig(), name="bar"),
           MockTask(params=cfg.TaskConfig(), name="foo")
       ]
-      test_multitask = multitask.MultiTask(tasks=tasks)
       model = MockModel()
       test_evaluator = evaluator.MultiTaskEvaluator(
-          task=test_multitask, model=model)
+          eval_tasks=tasks, model=model)
       results = test_evaluator.evaluate(tf.convert_to_tensor(5, dtype=tf.int32))
     self.assertEqual(results["bar"]["counter"],
                      5. * distribution.num_replicas_in_sync)

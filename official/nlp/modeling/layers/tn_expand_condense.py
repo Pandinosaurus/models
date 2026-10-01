@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,14 +15,16 @@
 """ExpandCondense tensor network layer used in TN-BERT."""
 # pylint: disable=g-classes-have-attributes
 from typing import List, Optional, Text, Any, Dict
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
-Layer = tf.keras.layers.Layer
-activations = tf.keras.activations
-initializers = tf.keras.initializers
+from official.modeling import tf_utils
+
+Layer = tf_keras.layers.Layer
+activations = tf_keras.activations
+initializers = tf_keras.initializers
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
+@tf_keras.utils.register_keras_serializable(package='Text')
 class TNExpandCondense(Layer):
   """A TPU-optimized TensorNetwork layer.
 
@@ -64,7 +66,7 @@ class TNExpandCondense(Layer):
     if 'input_shape' not in kwargs and 'input_dim' in kwargs:
       kwargs['input_shape'] = (kwargs.pop('input_dim'),)
 
-    super(TNExpandCondense, self).__init__(**kwargs)
+    super().__init__(**kwargs)
 
     assert proj_multiplier in [
         2, 4, 6, 8, 10, 12
@@ -84,7 +86,7 @@ class TNExpandCondense(Layer):
           'The last dimension of the inputs to `TNExpandCondense` '
           'should be defined. Found `None`.')
 
-    super(TNExpandCondense, self).build(input_shape)
+    super().build(input_shape)
 
     self.proj_size = self.proj_multiplier * input_shape[-1]
 
@@ -98,24 +100,24 @@ class TNExpandCondense(Layer):
         name='w1',
         shape=(input_shape[-1], input_shape[-1]),
         trainable=True,
-        initializer=self.kernel_initializer)
+        initializer=tf_utils.clone_initializer(self.kernel_initializer))
 
     self.w2 = self.add_weight(
         name='w2',
         shape=(128, (128 * (self.proj_size // input_shape[-1]))),
         trainable=True,
-        initializer=self.kernel_initializer)
+        initializer=tf_utils.clone_initializer(self.kernel_initializer))
 
     self.w3 = self.add_weight(
         name='w3',
         shape=(128 * (self.proj_size // input_shape[-1]), 128),
         trainable=True,
-        initializer=self.kernel_initializer)
+        initializer=tf_utils.clone_initializer(self.kernel_initializer))
     self.w4 = self.add_weight(
         name='w4',
         shape=(input_shape[-1] // 128, 128, input_shape[-1]),
         trainable=True,
-        initializer=self.kernel_initializer)
+        initializer=tf_utils.clone_initializer(self.kernel_initializer))
 
     if self.use_bias:
       self.bias = self.add_weight(
@@ -176,5 +178,5 @@ class TNExpandCondense(Layer):
           getattr(self, initializer_arg))
 
     # Get base config
-    base_config = super(TNExpandCondense, self).get_config()
+    base_config = super().get_config()
     return dict(list(base_config.items()) + list(config.items()))

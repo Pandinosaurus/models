@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ import time
 from typing import Any, Mapping, Optional
 
 from absl import logging
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.common import distribute_utils
 from official.core import config_definitions
@@ -28,7 +28,6 @@ from official.core import train_lib
 from official.core import train_utils
 from official.modeling import performance
 from official.modeling.multitask import configs
-from official.modeling.multitask import multitask
 from official.modeling.multitask import train_lib as multitask_train_lib
 
 
@@ -167,7 +166,10 @@ def run_continuous_finetune(
     with distribution_strategy.scope():
       if isinstance(params, configs.MultiEvalExperimentConfig):
         task = task_factory.get_task(params_replaced.task)
-        eval_tasks = multitask.MultiTask.from_config(params_replaced.eval_tasks)
+        eval_tasks = [
+            task_factory.get_task(config.task_config, name=config.task_name)
+            for config in params.eval_tasks
+        ]
         (_,
          eval_metrics) = multitask_train_lib.run_experiment_with_multitask_eval(
              distribution_strategy=distribution_strategy,

@@ -1,4 +1,3 @@
-# Lint as: python2, python3
 # Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,8 +99,8 @@ If side inputs are desired, the following arguments could be appended
 from absl import app
 from absl import flags
 
-import tensorflow.compat.v2 as tf
 from google.protobuf import text_format
+import tensorflow.compat.v2 as tf
 from object_detection import exporter_lib_v2
 from object_detection.protos import pipeline_pb2
 

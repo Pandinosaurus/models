@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,16 +13,16 @@
 # limitations under the License.
 
 """Tests for Keras based XLNet model."""
+
+from absl.testing import parameterized
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from tensorflow.python.distribute import combinations
-from tensorflow.python.keras import keras_parameterized  # pylint: disable=g-direct-tensorflow-import
 from official.nlp.modeling.networks import xlnet_base
 
 
-@keras_parameterized.run_all_keras_modes
-class RelativePositionEncodingTest(keras_parameterized.TestCase):
+class RelativePositionEncodingTest(tf.test.TestCase):
 
   def test_positional_embedding(self):
     """A low-dimensional example is tested.
@@ -47,7 +47,7 @@ class RelativePositionEncodingTest(keras_parameterized.TestCase):
     self.assertAllClose(encoding, target)
 
 
-class ComputePositionEncodingTest(keras_parameterized.TestCase):
+class ComputePositionEncodingTest(tf.test.TestCase, parameterized.TestCase):
 
   @combinations.generate(combinations.combine(
       attention_type=["uni", "bi"],
@@ -111,7 +111,7 @@ class CausalAttentionMaskTests(tf.test.TestCase):
     self.assertAllClose(causal_attention_mask, expected_output)
 
 
-class MaskComputationTests(keras_parameterized.TestCase):
+class MaskComputationTests(tf.test.TestCase, parameterized.TestCase):
 
   @combinations.generate(combinations.combine(
       use_input_mask=[False, True],
@@ -411,7 +411,7 @@ class XLNetModelTests(tf.test.TestCase):
         attention_dropout_rate=0.,
         attention_type="bi",
         bi_data=True,
-        initializer=tf.keras.initializers.RandomNormal(stddev=0.1),
+        initializer=tf_keras.initializers.RandomNormal(stddev=0.1),
         two_stream=False,
         tie_attention_biases=True,
         reuse_length=0,
@@ -435,7 +435,7 @@ class XLNetModelTests(tf.test.TestCase):
         attention_dropout_rate=0.,
         attention_type="bi",
         bi_data=True,
-        initializer=tf.keras.initializers.RandomNormal(stddev=0.1),
+        initializer=tf_keras.initializers.RandomNormal(stddev=0.1),
         two_stream=False,
         tie_attention_biases=True,
         memory_length=0,

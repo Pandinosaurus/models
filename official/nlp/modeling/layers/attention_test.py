@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,9 +15,8 @@
 """Tests for the attention layer."""
 
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
-from tensorflow.python.keras import keras_parameterized  # pylint: disable=g-direct-tensorflow-import
 from official.nlp.modeling.layers import attention
 
 
@@ -32,8 +31,7 @@ def _create_cache(batch_size, init_decode_length, num_heads, head_size):
   }
 
 
-@keras_parameterized.run_all_keras_modes
-class CachedAttentionTest(keras_parameterized.TestCase):
+class CachedAttentionTest(tf.test.TestCase):
 
   def test_masked_attention(self):
     """Test with a mask tensor."""

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,14 +18,16 @@ import math
 import string
 
 import gin
-import tensorflow as tf
+import tensorflow as tf, tf_keras
+
+from official.modeling import tf_utils
 
 _CHR_IDX = string.ascii_lowercase
 
 
-@tf.keras.utils.register_keras_serializable(package="Text")
+@tf_keras.utils.register_keras_serializable(package="Text")
 @gin.configurable
-class TalkingHeadsAttention(tf.keras.layers.MultiHeadAttention):
+class TalkingHeadsAttention(tf_keras.layers.MultiHeadAttention):
   """Implements Talking-Heads Attention.
 
   This is an implementation of Talking-Heads Attention based on the paper
@@ -33,7 +35,7 @@ class TalkingHeadsAttention(tf.keras.layers.MultiHeadAttention):
   multi-head attention by including linearprojections across the attention-heads
   dimension, immediately before and after the softmax operation.
 
-  See the base class `tf.keras.layers.MultiHeadAttention` for more details.
+  See the base class `tf_keras.layers.MultiHeadAttention` for more details.
 
   Args:
     num_heads: Number of attention heads.
@@ -87,7 +89,7 @@ class TalkingHeadsAttention(tf.keras.layers.MultiHeadAttention):
     self._pre_softmax_weight = self.add_weight(
         "pre_softmax_weight",
         shape=(self._num_heads, self._num_heads),
-        initializer=self._kernel_initializer,
+        initializer=tf_utils.clone_initializer(self._kernel_initializer),
         regularizer=self._kernel_regularizer,
         constraint=self._kernel_constraint,
         dtype=self.dtype,
@@ -95,7 +97,7 @@ class TalkingHeadsAttention(tf.keras.layers.MultiHeadAttention):
     self._post_softmax_weight = self.add_weight(
         "post_softmax_weight",
         shape=(self._num_heads, self._num_heads),
-        initializer=self._kernel_initializer,
+        initializer=tf_utils.clone_initializer(self._kernel_initializer),
         regularizer=self._kernel_regularizer,
         constraint=self._kernel_constraint,
         dtype=self.dtype,

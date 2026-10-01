@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,71 +15,39 @@
 """Functions and classes related to training performance."""
 
 from absl import logging
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 
 def configure_optimizer(optimizer,
                         use_float16=False,
-                        use_graph_rewrite=False,
-                        loss_scale='dynamic',
-                        use_experimental_api=False):
+                        loss_scale=None,
+                        use_graph_rewrite=None):
   """Configures optimizer object with performance options."""
-  if use_experimental_api:
-    logging.warning('Passing use_experimental_api=True is deprecated. The '
-                    'argument will be removed in the future.')
+  if use_graph_rewrite is not None:
+    logging.warning('`use_graph_rewrite` is deprecated inside '
+                    '`configure_optimizer`. Please remove the usage.')
+  del use_graph_rewrite
   if use_float16:
-    # TODO(b/171936854): Move all methods to non-experimental api.
-    if use_experimental_api:
-      # Wraps optimizer with a LossScaleOptimizer. This is done automatically
-      # in compile() with the "mixed_float16" policy, but since we do not call
-      # compile(), we must wrap the optimizer manually.
-      optimizer = (
-          tf.keras.mixed_precision.experimental.LossScaleOptimizer(
-              optimizer, loss_scale=loss_scale))
-    elif loss_scale == 'dynamic':
-      optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
+    if loss_scale in (None, 'dynamic'):
+      optimizer = tf_keras.mixed_precision.LossScaleOptimizer(optimizer)
     else:
       # loss_scale is a number. We interpret that as a fixed loss scale.
-      optimizer = tf.keras.mixed_precision.LossScaleOptimizer(
+      optimizer = tf_keras.mixed_precision.LossScaleOptimizer(
           optimizer, dynamic=False, initial_scale=loss_scale)
-  if use_graph_rewrite:
-    # Note: the model dtype must be 'float32', which will ensure
-    # tf.keras.mixed_precision and enable_mixed_precision_graph_rewrite do not
-    # double up.
-    optimizer = (
-        tf.compat.v1.mixed_precision.enable_mixed_precision_graph_rewrite(
-            optimizer))
   return optimizer
 
 
-def set_mixed_precision_policy(dtype, loss_scale=None,
-                               use_experimental_api=False):
-  """Sets mix precision policy."""
-  if use_experimental_api:
-    logging.warning('Passing use_experimental_api=True is deprecated. The '
-                    'argument will be removed in the future.')
-  assert use_experimental_api or loss_scale is None, (
-      'loss_scale cannot be specified if use_experimental_api is False. If the '
-      'non-experimental API is used, specify the loss scaling configuration '
-      'when creating the LossScaleOptimizer instead.'
-  )
+def set_mixed_precision_policy(dtype, loss_scale=None):
+  """Sets the global `tf_keras.mixed_precision.Policy`."""
+  # TODO(b/191894773): Remove loss_scale argument
+  assert loss_scale is None, (
+      'The loss_scale argument must be None. The argument exists for '
+      'historical reasons and will be removed soon.')
   if dtype == tf.float16:
-    # TODO(b/171936854): Move all methods to non-experimental api.
-    if use_experimental_api:
-      policy = tf.keras.mixed_precision.experimental.Policy(
-          'mixed_float16', loss_scale=loss_scale)
-      tf.keras.mixed_precision.experimental.set_policy(policy)
-    else:
-      tf.keras.mixed_precision.set_global_policy('mixed_float16')
+    tf_keras.mixed_precision.set_global_policy('mixed_float16')
   elif dtype == tf.bfloat16:
-    if use_experimental_api:
-      tf.keras.mixed_precision.experimental.set_policy('mixed_bfloat16')
-    else:
-      tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
+    tf_keras.mixed_precision.set_global_policy('mixed_bfloat16')
   elif dtype == tf.float32:
-    if use_experimental_api:
-      tf.keras.mixed_precision.experimental.set_policy('float32')
-    else:
-      tf.keras.mixed_precision.set_global_policy('float32')
+    tf_keras.mixed_precision.set_global_policy('float32')
   else:
     raise ValueError('Unexpected dtype: %s' % dtype)

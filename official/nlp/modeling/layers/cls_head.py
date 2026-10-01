@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """A Classification head layer which is common used with sequence encoders."""
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.modeling import tf_utils
 
@@ -22,7 +22,7 @@ from official.nlp.modeling.layers import gaussian_process
 from official.nlp.modeling.layers import spectral_normalization
 
 
-class ClassificationHead(tf.keras.layers.Layer):
+class ClassificationHead(tf_keras.layers.Layer):
   """Pooling head for sentence-level classification tasks."""
 
   def __init__(self,
@@ -50,28 +50,44 @@ class ClassificationHead(tf.keras.layers.Layer):
     self.inner_dim = inner_dim
     self.num_classes = num_classes
     self.activation = tf_utils.get_activation(activation)
-    self.initializer = tf.keras.initializers.get(initializer)
+    self.initializer = tf_keras.initializers.get(initializer)
     self.cls_token_idx = cls_token_idx
 
     if self.inner_dim:
-      self.dense = tf.keras.layers.Dense(
+      self.dense = tf_keras.layers.Dense(
           units=self.inner_dim,
           activation=self.activation,
-          kernel_initializer=self.initializer,
+          kernel_initializer=tf_utils.clone_initializer(self.initializer),
           name="pooler_dense")
-      self.dropout = tf.keras.layers.Dropout(rate=self.dropout_rate)
+    self.dropout = tf_keras.layers.Dropout(rate=self.dropout_rate)
 
-    self.out_proj = tf.keras.layers.Dense(
-        units=num_classes, kernel_initializer=self.initializer, name="logits")
+    self.out_proj = tf_keras.layers.Dense(
+        units=num_classes,
+        kernel_initializer=tf_utils.clone_initializer(self.initializer),
+        name="logits")
 
-  def call(self, features):
+  def call(self, features: tf.Tensor, only_project: bool = False):
+    """Implements call().
+
+    Args:
+      features: a rank-3 Tensor when self.inner_dim is specified, otherwise
+        it is a rank-2 Tensor.
+      only_project: a boolean. If True, we return the intermediate Tensor
+        before projecting to class logits.
+
+    Returns:
+      a Tensor, if only_project is True, shape= [batch size, hidden size].
+      If only_project is False, shape= [batch size, num classes].
+    """
     if not self.inner_dim:
       x = features
     else:
       x = features[:, self.cls_token_idx, :]  # take <CLS> token.
       x = self.dense(x)
-      x = self.dropout(x)
 
+    if only_project:
+      return x
+    x = self.dropout(x)
     x = self.out_proj(x)
     return x
 
@@ -81,8 +97,8 @@ class ClassificationHead(tf.keras.layers.Layer):
         "dropout_rate": self.dropout_rate,
         "num_classes": self.num_classes,
         "inner_dim": self.inner_dim,
-        "activation": tf.keras.activations.serialize(self.activation),
-        "initializer": tf.keras.initializers.serialize(self.initializer),
+        "activation": tf_keras.activations.serialize(self.activation),
+        "initializer": tf_keras.initializers.serialize(self.initializer),
     }
     config.update(super(ClassificationHead, self).get_config())
     return config
@@ -96,7 +112,7 @@ class ClassificationHead(tf.keras.layers.Layer):
     return {self.dense.name: self.dense}
 
 
-class MultiClsHeads(tf.keras.layers.Layer):
+class MultiClsHeads(tf_keras.layers.Layer):
   """Pooling heads sharing the same pooling stem."""
 
   def __init__(self,
@@ -125,30 +141,46 @@ class MultiClsHeads(tf.keras.layers.Layer):
     self.inner_dim = inner_dim
     self.cls_list = cls_list
     self.activation = tf_utils.get_activation(activation)
-    self.initializer = tf.keras.initializers.get(initializer)
+    self.initializer = tf_keras.initializers.get(initializer)
     self.cls_token_idx = cls_token_idx
 
     if self.inner_dim:
-      self.dense = tf.keras.layers.Dense(
+      self.dense = tf_keras.layers.Dense(
           units=inner_dim,
           activation=self.activation,
-          kernel_initializer=self.initializer,
+          kernel_initializer=tf_utils.clone_initializer(self.initializer),
           name="pooler_dense")
-      self.dropout = tf.keras.layers.Dropout(rate=self.dropout_rate)
+    self.dropout = tf_keras.layers.Dropout(rate=self.dropout_rate)
     self.out_projs = []
     for name, num_classes in cls_list:
       self.out_projs.append(
-          tf.keras.layers.Dense(
-              units=num_classes, kernel_initializer=self.initializer,
+          tf_keras.layers.Dense(
+              units=num_classes,
+              kernel_initializer=tf_utils.clone_initializer(self.initializer),
               name=name))
 
-  def call(self, features):
+  def call(self, features: tf.Tensor, only_project: bool = False):
+    """Implements call().
+
+    Args:
+      features: a rank-3 Tensor when self.inner_dim is specified, otherwise
+        it is a rank-2 Tensor.
+      only_project: a boolean. If True, we return the intermediate Tensor
+        before projecting to class logits.
+
+    Returns:
+      If only_project is True, a Tensor with shape= [batch size, hidden size].
+      If only_project is False, a dictionary of Tensors.
+    """
     if not self.inner_dim:
       x = features
     else:
       x = features[:, self.cls_token_idx, :]  # take <CLS> token.
       x = self.dense(x)
-      x = self.dropout(x)
+
+    if only_project:
+      return x
+    x = self.dropout(x)
 
     outputs = {}
     for proj_layer in self.out_projs:
@@ -161,8 +193,8 @@ class MultiClsHeads(tf.keras.layers.Layer):
         "cls_token_idx": self.cls_token_idx,
         "cls_list": self.cls_list,
         "inner_dim": self.inner_dim,
-        "activation": tf.keras.activations.serialize(self.activation),
-        "initializer": tf.keras.initializers.serialize(self.initializer),
+        "activation": tf_keras.activations.serialize(self.activation),
+        "initializer": tf_keras.initializers.serialize(self.initializer),
     }
     config.update(super().get_config())
     return config
@@ -248,11 +280,11 @@ class GaussianProcessClassificationHead(ClassificationHead):
     if use_gp_layer:
       self.out_proj = gaussian_process.RandomFeatureGaussianProcess(
           self.num_classes,
-          kernel_initializer=self.initializer,
+          kernel_initializer=tf_utils.clone_initializer(self.initializer),
           name="logits",
           **self.gp_layer_kwargs)
 
-  def call(self, features, training=False, return_covmat=False):
+  def call(self, features, training=False, return_covmat=False):  # pyrefly: ignore[bad-override]
     """Returns model output.
 
     Dring training, the model returns raw logits. During evaluation, the model
@@ -332,3 +364,97 @@ def extract_spec_norm_kwargs(kwargs):
   return dict(
       iteration=kwargs.pop("iteration", 1),
       norm_multiplier=kwargs.pop("norm_multiplier", .99))
+
+
+class PerQueryDenseHead(tf_keras.layers.Layer):
+  """Pooling head used for EncT5 style models.
+
+    This module projects each query to use a different projection.
+
+    For a input shape= [bs, num_queries, hidden_size], it projects each query to
+    (features). Ending up with shape= [bs, num_queries, features].
+
+    For example, for classification with a few classes, one may use num_queries
+    as 1 and features as number of classes. For multilabel classification, one
+    may use num_queries as number of classes and features as 2. So each query
+    represents a binary classification of one label.
+  """
+
+  def __init__(self,
+               num_queries: int,
+               features: int,
+               use_bias: bool = False,
+               kernel_initializer: str = "glorot_uniform",
+               **kwargs):
+    """Initializes the `PerQueryDenseHead`.
+
+    Args:
+      num_queries: number of queries (the learnable embeddings in the input
+        sequences) from the decoder.
+      features: int with numbers of output features. Each query with be
+        projected to this number with a different projection.
+      use_bias: whether to add a bias to the output.
+      kernel_initializer: Initializer for dense layer kernels.
+      **kwargs: Keyword arguments.
+    """
+    super().__init__(**kwargs)
+    self.num_queries = num_queries
+    self.features = features
+
+    self.use_bias = use_bias
+    self.kernel_initializer = tf_keras.initializers.get(kernel_initializer)
+
+  def build(self, input_shape):
+    input_shape = tf.TensorShape(input_shape)
+    # Hidden size.
+    last_dim = tf.compat.dimension_value(input_shape[-1])
+
+    self.hidden_size = last_dim
+    self.kernel = self.add_weight(
+        "kernel",
+        shape=[self.num_queries, last_dim, self.features],
+        initializer=self.kernel_initializer,
+        dtype=self.dtype,
+        trainable=True)
+    if self.use_bias:
+      self.bias = self.add_weight(
+          "bias",
+          shape=[
+              self.num_queries,
+              self.features,
+          ],
+          dtype=self.dtype,
+          trainable=True)
+    else:
+      self.bias = None
+
+  def call(self, inputs: tf.Tensor) -> tf.Tensor:
+    """Implements call().
+
+    Args:
+      inputs: a rank-3 Tensor of shape= [bs, num_queries, hidden_size].
+
+    Returns:
+      A Tensor, shape= [batch size, num_queries, features].
+    """
+
+    outputs = tf.einsum("bqh,qhf->bqf", inputs, self.kernel)
+    if self.use_bias:
+      outputs += self.bias
+    return outputs
+
+  def get_config(self):
+    config = {
+        "num_queries":
+            self.num_queries,
+        "features":
+            self.features,
+        "kernel_initializer":
+            tf_keras.activations.serialize(self.kernel_initializer),
+    }
+    config.update(super(PerQueryDenseHead, self).get_config())
+    return config
+
+  @classmethod
+  def from_config(cls, config, custom_objects=None):
+    return cls(**config)

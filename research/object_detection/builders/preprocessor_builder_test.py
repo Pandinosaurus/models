@@ -15,9 +15,8 @@
 
 """Tests for preprocessor_builder."""
 
-import tensorflow.compat.v1 as tf
-
 from google.protobuf import text_format
+import tensorflow.compat.v1 as tf
 
 from object_detection.builders import preprocessor_builder
 from object_detection.core import preprocessor
@@ -216,13 +215,14 @@ class PreprocessorBuilderTest(tf.test.TestCase):
     preprocessor_text_proto = """
     random_jitter_boxes {
       ratio: 0.1
+      jitter_mode: SHRINK
     }
     """
     preprocessor_proto = preprocessor_pb2.PreprocessingStep()
     text_format.Merge(preprocessor_text_proto, preprocessor_proto)
     function, args = preprocessor_builder.build(preprocessor_proto)
     self.assertEqual(function, preprocessor.random_jitter_boxes)
-    self.assert_dictionary_close(args, {'ratio': 0.1})
+    self.assert_dictionary_close(args, {'ratio': 0.1, 'jitter_mode': 'shrink'})
 
   def test_build_random_crop_image(self):
     preprocessor_text_proto = """
@@ -765,6 +765,7 @@ class PreprocessorBuilderTest(tf.test.TestCase):
     function, args = preprocessor_builder.build(preprocessor_proto)
     self.assertEqual(function, preprocessor.adjust_gamma)
     self.assert_dictionary_close(args, {'gamma': 2.2, 'gain': 2.0})
+
 
 
 if __name__ == '__main__':

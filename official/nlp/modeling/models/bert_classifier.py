@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,13 +15,13 @@
 """BERT cls-token classifier."""
 # pylint: disable=g-classes-have-attributes
 import collections
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.nlp.modeling import layers
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class BertClassifier(tf.keras.Model):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class BertClassifier(tf_keras.Model):
   """Classifier model based on a BERT-style transformer-based encoder.
 
   This is an implementation of the network structure surrounding a transformer
@@ -45,10 +45,11 @@ class BertClassifier(tf.keras.Model):
     dropout_rate: The dropout probability of the cls head.
     use_encoder_pooler: Whether to use the pooler layer pre-defined inside the
       encoder.
+    head_name: Name of the classification head.
     cls_head: (Optional) The layer instance to use for the classifier head.
       It should take in the output from network and produce the final logits.
       If set, the arguments ('num_classes', 'initializer', 'dropout_rate',
-      'use_encoder_pooler') will be ignored.
+      'use_encoder_pooler', 'head_name') will be ignored.
   """
 
   def __init__(self,
@@ -57,9 +58,11 @@ class BertClassifier(tf.keras.Model):
                initializer='glorot_uniform',
                dropout_rate=0.1,
                use_encoder_pooler=True,
+               head_name='sentence_prediction',
                cls_head=None,
                **kwargs):
     self.num_classes = num_classes
+    self.head_name = head_name
     self.initializer = initializer
     self.use_encoder_pooler = use_encoder_pooler
 
@@ -76,7 +79,7 @@ class BertClassifier(tf.keras.Model):
         cls_inputs = outputs[1]
       else:
         cls_inputs = outputs['pooled_output']
-      cls_inputs = tf.keras.layers.Dropout(rate=dropout_rate)(cls_inputs)
+      cls_inputs = tf_keras.layers.Dropout(rate=dropout_rate)(cls_inputs)
     else:
       outputs = network(inputs)
       if isinstance(outputs, list):
@@ -92,7 +95,7 @@ class BertClassifier(tf.keras.Model):
           num_classes=num_classes,
           initializer=initializer,
           dropout_rate=dropout_rate,
-          name='sentence_prediction')
+          name=head_name)
 
     predictions = classifier(cls_inputs)
 
@@ -114,7 +117,7 @@ class BertClassifier(tf.keras.Model):
     # the config dict attribute. TF does not track immutable attrs which
     # do not contain Trackables, so by creating a config namedtuple instead of
     # a dict we avoid tracking it.
-    config_cls = collections.namedtuple('Config', config_dict.keys())
+    config_cls = collections.namedtuple('Config', config_dict.keys())  # pyrefly: ignore[bad-class-definition]
     self._config = config_cls(**config_dict)
     self.classifier = classifier
 
@@ -137,6 +140,7 @@ class BertClassifier(tf.keras.Model):
     return {
         'network': self._network,
         'num_classes': self.num_classes,
+        'head_name': self.head_name,
         'initializer': self.initializer,
         'use_encoder_pooler': self.use_encoder_pooler,
         'cls_head': self._cls_head,

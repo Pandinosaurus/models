@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,9 +26,9 @@ import os
 
 from absl import logging
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
-from official.nlp.bert import tokenization
+from official.nlp.tools import tokenization
 
 
 class SquadExample(object):
@@ -63,7 +63,7 @@ class SquadExample(object):
         tokenization.printable_text(self.question_text))
     s += ", paragraph_text: [%s]" % (" ".join(self.paragraph_text))
     if self.start_position:
-      s += ", start_position: %d" % (self.start_position)
+      s += ", start_position: %d" % (self.start_position,)
     if self.start_position:
       s += ", end_position: %d" % (self.end_position)
     if self.start_position:
@@ -175,7 +175,7 @@ def _convert_index(index, pos, m=None, is_start=True):
     front -= 1
   assert index[front] is not None or index[rear] is not None
   if index[front] is None:
-    if index[rear] >= 1:
+    if index[rear] >= 1:  # pytype: disable=unsupported-operands
       if is_start:
         return 0
       else:
@@ -307,8 +307,8 @@ def convert_examples_to_features(examples,
       if (i, j) not in g:
         break
       if g[(i, j)] == 2:
-        orig_to_chartok_index[i] = j
-        chartok_to_orig_index[j] = i
+        orig_to_chartok_index[i] = j  # pyrefly: ignore[unsupported-operation]
+        chartok_to_orig_index[j] = i  # pyrefly: ignore[unsupported-operation]
         i, j = i - 1, j - 1
       elif g[(i, j)] == 1:
         j = j - 1
@@ -466,8 +466,8 @@ def convert_examples_to_features(examples,
         doc_start = doc_span.start
         doc_end = doc_span.start + doc_span.length - 1
         out_of_span = False
-        if not (tok_start_position >= doc_start and
-                tok_end_position <= doc_end):
+        if not (tok_start_position >= doc_start and  # pyrefly: ignore[unbound-name]
+                tok_end_position <= doc_end):  # pyrefly: ignore[unbound-name]
           out_of_span = True
         if out_of_span:
           # continue
@@ -511,7 +511,7 @@ def convert_examples_to_features(examples,
         if is_training and not span_is_impossible:
           pieces = [
               tokenizer.sp_model.IdToPiece(token)
-              for token in tokens[start_position:(end_position + 1)]
+              for token in tokens[start_position:(end_position + 1)]  # pyrefly: ignore[unsupported-operation]
           ]
           answer_text = tokenizer.sp_model.DecodePieces(pieces)
           logging.info("start_position: %d", (start_position))
@@ -557,7 +557,7 @@ def convert_examples_to_features(examples,
       else:
         cnt_pos += 1
 
-  if not is_training and feature:
+  if not is_training and feature:  # pyrefly: ignore[unbound-name]
     assert batch_size
     num_padding = 0
     num_examples = unique_id - base_id
@@ -776,7 +776,7 @@ def postprocess_output(all_examples,
               start_logit=pred.start_logit,
               end_logit=pred.end_logit))
 
-    # if we didn't inlude the empty option in the n-best, include it
+    # if we didn't include the empty option in the n-best, include it
     if version_2_with_negative and not xlnet_format:
       if "" not in seen_predictions:
         nbest.append(

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,15 +21,14 @@ import tempfile
 
 from typing import Optional, Text, Tuple
 
-# Import libraries
 from absl import logging
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 # pylint: disable=g-direct-tensorflow-import  TODO(b/175369555): Remove these.
 from tensorflow.core.protobuf import saved_model_pb2
-from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.ops import control_flow_assert
 # pylint: enable=g-direct-tensorflow-import
+from official.legacy.bert import configs
 from official.modeling import tf_utils
-from official.nlp.bert import configs
 from official.nlp.configs import encoders
 from official.nlp.modeling import layers
 from official.nlp.modeling import models
@@ -49,7 +48,7 @@ def get_bert_encoder(bert_config):
       attention_dropout_rate=bert_config.attention_probs_dropout_prob,
       max_sequence_length=bert_config.max_position_embeddings,
       type_vocab_size=bert_config.type_vocab_size,
-      initializer=tf.keras.initializers.TruncatedNormal(
+      initializer=tf_keras.initializers.TruncatedNormal(
           stddev=bert_config.initializer_range),
       embedding_width=bert_config.embedding_size,
       dict_outputs=True)
@@ -80,17 +79,17 @@ def _create_model(
     bert_config: Optional[configs.BertConfig] = None,
     encoder_config: Optional[encoders.EncoderConfig] = None,
     with_mlm: bool,
-) -> Tuple[tf.keras.Model, tf.keras.Model]:
+) -> Tuple[tf_keras.Model, tf_keras.Model]:
   """Creates the model to export and the model to restore the checkpoint.
 
   Args:
-    bert_config: A legacy `BertConfig` to create a `BertEncoder` object.
-      Exactly one of encoder_config and bert_config must be set.
+    bert_config: A legacy `BertConfig` to create a `BertEncoder` object. Exactly
+      one of encoder_config and bert_config must be set.
     encoder_config: An `EncoderConfig` to create an encoder of the configured
       type (`BertEncoder` or other).
-    with_mlm: A bool to control the second component of the result.
-      If True, will create a `BertPretrainerV2` object; otherwise, will
-      create a `BertEncoder` object.
+    with_mlm: A bool to control the second component of the result. If True,
+      will create a `BertPretrainerV2` object; otherwise, will create a
+      `BertEncoder` object.
 
   Returns:
     A Tuple of (1) a Keras model that will be exported, (2) a `BertPretrainerV2`
@@ -110,12 +109,16 @@ def _create_model(
 
   # Convert from list of named inputs to dict of inputs keyed by name.
   # Only the latter accepts a dict of inputs after restoring from SavedModel.
-  encoder_inputs_dict = {x.name: x for x in encoder.inputs}
+  if isinstance(encoder.inputs, list) or isinstance(encoder.inputs, tuple):
+    encoder_inputs_dict = {x.name: x for x in encoder.inputs}
+  else:
+    # encoder.inputs by default is dict for BertEncoderV2.
+    encoder_inputs_dict = encoder.inputs
   encoder_output_dict = encoder(encoder_inputs_dict)
   # For interchangeability with other text representations,
   # add "default" as an alias for BERT's whole-input reptesentations.
   encoder_output_dict["default"] = encoder_output_dict["pooled_output"]
-  core_model = tf.keras.Model(
+  core_model = tf_keras.Model(
       inputs=encoder_inputs_dict, outputs=encoder_output_dict)
 
   if with_mlm:
@@ -129,9 +132,12 @@ def _create_model(
         encoder_network=encoder,
         mlm_activation=tf_utils.get_activation(hidden_act))
 
-    pretrainer_inputs_dict = {x.name: x for x in pretrainer.inputs}
+    if isinstance(pretrainer.inputs, dict):
+      pretrainer_inputs_dict = pretrainer.inputs
+    else:
+      pretrainer_inputs_dict = {x.name: x for x in pretrainer.inputs}
     pretrainer_output_dict = pretrainer(pretrainer_inputs_dict)
-    mlm_model = tf.keras.Model(
+    mlm_model = tf_keras.Model(
         inputs=pretrainer_inputs_dict, outputs=pretrainer_output_dict)
     # Set `_auto_track_sub_layers` to False, so that the additional weights
     # from `mlm` sub-object will not be included in the core model.
@@ -206,26 +212,28 @@ def export_model(export_path: Text,
     encoder_config: An optional `encoders.EncoderConfig` object.
     model_checkpoint_path: The path to the checkpoint.
     with_mlm: Whether to export the additional mlm sub-object.
-    copy_pooler_dense_to_encoder: Whether to copy the pooler's dense layer
-      used in the next sentence prediction task to the encoder.
+    copy_pooler_dense_to_encoder: Whether to copy the pooler's dense layer used
+      in the next sentence prediction task to the encoder.
     vocab_file: The path to the wordpiece vocab file, or None.
-    sp_model_file: The path to the sentencepiece model file, or None.
-      Exactly one of vocab_file and sp_model_file must be set.
+    sp_model_file: The path to the sentencepiece model file, or None. Exactly
+      one of vocab_file and sp_model_file must be set.
     do_lower_case: Whether to lower-case text before tokenization.
   """
   if with_mlm:
-    core_model, pretrainer = _create_model(bert_config=bert_config,
-                                           encoder_config=encoder_config,
-                                           with_mlm=with_mlm)
+    core_model, pretrainer = _create_model(
+        bert_config=bert_config,
+        encoder_config=encoder_config,
+        with_mlm=with_mlm)
     encoder = pretrainer.encoder_network
     # It supports both the new pretrainer checkpoint produced by TF-NLP and
     # the checkpoint converted from TF1 (original BERT, SmallBERTs).
     checkpoint_items = pretrainer.checkpoint_items
     checkpoint = tf.train.Checkpoint(**checkpoint_items)
   else:
-    core_model, encoder = _create_model(bert_config=bert_config,
-                                        encoder_config=encoder_config,
-                                        with_mlm=with_mlm)
+    core_model, encoder = _create_model(
+        bert_config=bert_config,
+        encoder_config=encoder_config,
+        with_mlm=with_mlm)
     checkpoint = tf.train.Checkpoint(
         model=encoder,  # Legacy checkpoints.
         encoder=encoder)
@@ -279,21 +287,26 @@ class BertPackInputsSavedModelWrapper(tf.train.Checkpoint):
     # overridable. Having this dynamically determined default argument
     # requires self.__call__ to be defined in this indirect way.
     default_seq_length = bert_pack_inputs.seq_length
+
     @tf.function(autograph=False)
     def call(inputs, seq_length=default_seq_length):
       return layers.BertPackInputs.bert_pack_inputs(
-          inputs, seq_length=seq_length,
+          inputs,
+          seq_length=seq_length,
           start_of_sequence_id=bert_pack_inputs.start_of_sequence_id,
           end_of_segment_id=bert_pack_inputs.end_of_segment_id,
           padding_id=bert_pack_inputs.padding_id)
+
     self.__call__ = call
 
     for ragged_rank in range(1, 3):
       for num_segments in range(1, 3):
-        _ = self.__call__.get_concrete_function(
-            [tf.RaggedTensorSpec([None] * (ragged_rank + 1), dtype=tf.int32)
-             for _ in range(num_segments)],
-            seq_length=tf.TensorSpec([], tf.int32))
+        _ = self.__call__.get_concrete_function([
+            tf.RaggedTensorSpec([None] * (ragged_rank + 1), dtype=tf.int32)
+            for _ in range(num_segments)
+        ],
+                                                seq_length=tf.TensorSpec(
+                                                    [], tf.int32))
 
 
 def create_preprocessing(*,
@@ -301,7 +314,7 @@ def create_preprocessing(*,
                          sp_model_file: Optional[str] = None,
                          do_lower_case: bool,
                          tokenize_with_offsets: bool,
-                         default_seq_length: int) -> tf.keras.Model:
+                         default_seq_length: int) -> tf_keras.Model:
   """Returns a preprocessing Model for given tokenization parameters.
 
   This function builds a Keras Model with attached subobjects suitable for
@@ -311,18 +324,18 @@ def create_preprocessing(*,
 
   Args:
     vocab_file: The path to the wordpiece vocab file, or None.
-    sp_model_file: The path to the sentencepiece model file, or None.
-      Exactly one of vocab_file and sp_model_file must be set.
-      This determines the type of tokenzer that is used.
+    sp_model_file: The path to the sentencepiece model file, or None. Exactly
+      one of vocab_file and sp_model_file must be set. This determines the type
+      of tokenzer that is used.
     do_lower_case: Whether to do lower case.
     tokenize_with_offsets: Whether to include the .tokenize_with_offsets
       subobject.
-    default_seq_length: The sequence length of preprocessing results from
-      root callable. This is also the default sequence length for the
+    default_seq_length: The sequence length of preprocessing results from root
+      callable. This is also the default sequence length for the
       bert_pack_inputs subobject.
 
   Returns:
-    A tf.keras.Model object with several attached subobjects, suitable for
+    A tf_keras.Model object with several attached subobjects, suitable for
     saving as a preprocessing SavedModel.
   """
   # Select tokenizer.
@@ -342,7 +355,7 @@ def create_preprocessing(*,
 
   # The root object of the preprocessing model can be called to do
   # one-shot preprocessing for users with single-sentence inputs.
-  sentences = tf.keras.layers.Input(shape=(), dtype=tf.string, name="sentences")
+  sentences = tf_keras.layers.Input(shape=(), dtype=tf.string, name="sentences")
   if tokenize_with_offsets:
     tokens, start_offsets, limit_offsets = tokenize(sentences)
   else:
@@ -351,24 +364,24 @@ def create_preprocessing(*,
       seq_length=default_seq_length,
       special_tokens_dict=tokenize.get_special_tokens_dict())
   model_inputs = pack(tokens)
-  preprocessing = tf.keras.Model(sentences, model_inputs)
+  preprocessing = tf_keras.Model(sentences, model_inputs)
 
   # Individual steps of preprocessing are made available as named subobjects
   # to enable more general preprocessing. For saving, they need to be Models
   # in their own right.
-  preprocessing.tokenize = tf.keras.Model(sentences, tokens)
+  preprocessing.tokenize = tf_keras.Model(sentences, tokens)
   # Provide an equivalent to tokenize.get_special_tokens_dict().
   preprocessing.tokenize.get_special_tokens_dict = tf.train.Checkpoint()
   preprocessing.tokenize.get_special_tokens_dict.__call__ = tf.function(
       lambda: tokenize.get_special_tokens_dict(),  # pylint: disable=[unnecessary-lambda]
       input_signature=[])
   if tokenize_with_offsets:
-    preprocessing.tokenize_with_offsets = tf.keras.Model(
-        sentences, [tokens, start_offsets, limit_offsets])
+    preprocessing.tokenize_with_offsets = tf_keras.Model(
+        sentences, [tokens, start_offsets, limit_offsets])  # pyrefly: ignore[unbound-name]
     preprocessing.tokenize_with_offsets.get_special_tokens_dict = (
         preprocessing.tokenize.get_special_tokens_dict)
   # Conceptually, this should be
-  # preprocessing.bert_pack_inputs = tf.keras.Model(tokens, model_inputs)
+  # preprocessing.bert_pack_inputs = tf_keras.Model(tokens, model_inputs)
   # but technicalities require us to use a wrapper (see comments there).
   # In particular, seq_length can be overridden when calling this.
   preprocessing.bert_pack_inputs = BertPackInputsSavedModelWrapper(pack)
@@ -378,7 +391,8 @@ def create_preprocessing(*,
 
 def _move_to_tmpdir(file_path: Optional[Text], tmpdir: Text) -> Optional[Text]:
   """Returns new path with same basename and hash of original path."""
-  if file_path is None: return None
+  if file_path is None:
+    return None
   olddir, filename = os.path.split(file_path)
   hasher = hashlib.sha1()
   hasher.update(olddir.encode("utf-8"))
@@ -441,15 +455,15 @@ def _dont_assert(condition, data, summarize=None, name="Assert"):
 
 @contextlib.contextmanager
 def _maybe_disable_assert(disable_assert):
-  """Scoped monkey patch of control_flow_ops.Assert to a no-op."""
+  """Scoped monkey patch of control_flow_assert.Assert to a no-op."""
   if not disable_assert:
     yield
     return
 
-  original_assert = control_flow_ops.Assert
-  control_flow_ops.Assert = _dont_assert
+  original_assert = control_flow_assert.Assert
+  control_flow_assert.Assert = _dont_assert
   yield
-  control_flow_ops.Assert = original_assert
+  control_flow_assert.Assert = original_assert
 
 
 def _check_no_assert(saved_model_path):
@@ -460,12 +474,17 @@ def _check_no_assert(saved_model_path):
 
   assert_nodes = []
   graph_def = saved_model.meta_graphs[0].graph_def
-  assert_nodes += ["node '{}' in global graph".format(n.name)
-                   for n in graph_def.node if n.op == "Assert"]
+  assert_nodes += [
+      "node '{}' in global graph".format(n.name)
+      for n in graph_def.node
+      if n.op == "Assert"
+  ]
   for fdef in graph_def.library.function:
     assert_nodes += [
         "node '{}' in function '{}'".format(n.name, fdef.signature.name)
-        for n in fdef.node_def if n.op == "Assert"]
+        for n in fdef.node_def
+        if n.op == "Assert"
+    ]
   if assert_nodes:
     raise AssertionError(
         "Internal tool error: "

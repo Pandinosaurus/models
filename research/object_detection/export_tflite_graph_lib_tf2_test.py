@@ -1,4 +1,3 @@
-# Lint as: python3
 # Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +17,7 @@
 from __future__ import division
 import os
 import unittest
+from google.protobuf import text_format
 import six
 
 import tensorflow.compat.v2 as tf
@@ -27,7 +27,6 @@ from object_detection.builders import model_builder
 from object_detection.core import model
 from object_detection.protos import pipeline_pb2
 from object_detection.utils import tf_version
-from google.protobuf import text_format
 
 if six.PY2:
   import mock  # pylint: disable=g-importing-member,g-import-not-at-top

@@ -1,4 +1,4 @@
-# Copyright 2021 The Orbit Authors. All Rights Reserved.
+# Copyright 2026 The Orbit Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ from absl.testing import parameterized
 from orbit import standard_runner
 from orbit import utils
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 
 def dataset_fn(input_context=None):
@@ -91,10 +91,10 @@ class TestEvaluatorWithOutputsAggregation(standard_runner.StandardEvaluator):
     super().__init__(eval_dataset=dataset, options=options)
 
   def eval_begin(self):
-    return tf.constant((0.0,))
+    return {"logits": tf.constant((0.0,))}
 
   def eval_reduce(self, state, step_outputs):
-    state = tf.concat([state, step_outputs], 0)
+    state["logits"] = tf.concat([state["logits"], step_outputs], 0)
     return state
 
   def eval_step(self, iterator):
@@ -107,7 +107,7 @@ class TestEvaluatorWithOutputsAggregation(standard_runner.StandardEvaluator):
         self.strategy.run(replica_step, args=(next(iterator),)))
 
   def eval_end(self, outputs):
-    return tf.reduce_sum(outputs)
+    return tf.reduce_sum(outputs["logits"])
 
 
 class StandardRunnerTest(parameterized.TestCase):

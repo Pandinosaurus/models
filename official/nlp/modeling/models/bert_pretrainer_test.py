@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,18 +16,14 @@
 import itertools
 
 from absl.testing import parameterized
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
-from tensorflow.python.keras import keras_parameterized  # pylint: disable=g-direct-tensorflow-import
 from official.nlp.modeling import layers
 from official.nlp.modeling import networks
 from official.nlp.modeling.models import bert_pretrainer
 
 
-# This decorator runs the test in V1, V2-Eager, and V2-Functional mode. It
-# guarantees forward compatibility of this code for the V2 switchover.
-@keras_parameterized.run_all_keras_modes
-class BertPretrainerTest(keras_parameterized.TestCase):
+class BertPretrainerTest(tf.test.TestCase, parameterized.TestCase):
 
   def test_bert_pretrainer(self):
     """Validate that the Keras object can be created."""
@@ -48,10 +44,10 @@ class BertPretrainerTest(keras_parameterized.TestCase):
         num_token_predictions=num_token_predictions)
 
     # Create a set of 2-dimensional inputs (the first dimension is implicit).
-    word_ids = tf.keras.Input(shape=(sequence_length,), dtype=tf.int32)
-    mask = tf.keras.Input(shape=(sequence_length,), dtype=tf.int32)
-    type_ids = tf.keras.Input(shape=(sequence_length,), dtype=tf.int32)
-    masked_lm_positions = tf.keras.Input(
+    word_ids = tf_keras.Input(shape=(sequence_length,), dtype=tf.int32)
+    mask = tf_keras.Input(shape=(sequence_length,), dtype=tf.int32)
+    type_ids = tf_keras.Input(shape=(sequence_length,), dtype=tf.int32)
+    masked_lm_positions = tf_keras.Input(
         shape=(num_token_predictions,), dtype=tf.int32)
 
     # Invoke the trainer model on the inputs. This causes the layer to be built.
@@ -67,10 +63,8 @@ class BertPretrainerTest(keras_parameterized.TestCase):
 
   def test_bert_trainer_tensor_call(self):
     """Validate that the Keras object can be invoked."""
-    # Build a transformer network to use within the BERT trainer. (Here, we use
-    # a short sequence_length for convenience.)
-    test_network = networks.BertEncoder(
-        vocab_size=100, num_layers=2, sequence_length=2)
+    # Build a transformer network to use within the BERT trainer.
+    test_network = networks.BertEncoder(vocab_size=100, num_layers=2)
 
     # Create a BERT trainer with the created network.
     bert_trainer_model = bert_pretrainer.BertPretrainer(
@@ -111,7 +105,7 @@ class BertPretrainerTest(keras_parameterized.TestCase):
                         new_bert_trainer_model.get_config())
 
 
-class BertPretrainerV2Test(keras_parameterized.TestCase):
+class BertPretrainerV2Test(tf.test.TestCase, parameterized.TestCase):
 
   @parameterized.parameters(itertools.product(
       (False, True),
@@ -123,17 +117,17 @@ class BertPretrainerV2Test(keras_parameterized.TestCase):
                              use_customized_masked_lm, has_masked_lm_positions):
     """Validate that the Keras object can be created."""
     # Build a transformer network to use within the BERT trainer.
+    del dict_outputs, return_all_encoder_outputs
     vocab_size = 100
     sequence_length = 512
     hidden_size = 48
     num_layers = 2
-    test_network = networks.BertEncoder(
+    test_network = networks.BertEncoderV2(
         vocab_size=vocab_size,
         num_layers=num_layers,
         hidden_size=hidden_size,
-        max_sequence_length=sequence_length,
-        return_all_encoder_outputs=return_all_encoder_outputs,
-        dict_outputs=dict_outputs)
+        max_sequence_length=sequence_length)
+    _ = test_network(test_network.inputs)
 
     # Create a BERT trainer with the created network.
     if use_customized_masked_lm:
@@ -147,17 +141,17 @@ class BertPretrainerV2Test(keras_parameterized.TestCase):
     num_token_predictions = 20
     # Create a set of 2-dimensional inputs (the first dimension is implicit).
     inputs = dict(
-        input_word_ids=tf.keras.Input(shape=(sequence_length,), dtype=tf.int32),
-        input_mask=tf.keras.Input(shape=(sequence_length,), dtype=tf.int32),
-        input_type_ids=tf.keras.Input(shape=(sequence_length,), dtype=tf.int32))
+        input_word_ids=tf_keras.Input(shape=(sequence_length,), dtype=tf.int32),
+        input_mask=tf_keras.Input(shape=(sequence_length,), dtype=tf.int32),
+        input_type_ids=tf_keras.Input(shape=(sequence_length,), dtype=tf.int32))
     if has_masked_lm_positions:
-      inputs['masked_lm_positions'] = tf.keras.Input(
+      inputs['masked_lm_positions'] = tf_keras.Input(
           shape=(num_token_predictions,), dtype=tf.int32)
 
     # Invoke the trainer model on the inputs. This causes the layer to be built.
     outputs = bert_trainer_model(inputs)
 
-    has_encoder_outputs = dict_outputs or return_all_encoder_outputs
+    has_encoder_outputs = True  # dict_outputs or return_all_encoder_outputs
     expected_keys = ['sequence_output', 'pooled_output']
     if has_encoder_outputs:
       expected_keys.append('encoder_outputs')
@@ -186,12 +180,11 @@ class BertPretrainerV2Test(keras_parameterized.TestCase):
     sequence_length = 512
     hidden_size = 48
     num_layers = 2
-    test_network = networks.BertEncoder(
+    test_network = networks.BertEncoderV2(
         vocab_size=vocab_size,
         num_layers=num_layers,
         hidden_size=hidden_size,
-        max_sequence_length=sequence_length,
-        dict_outputs=True)
+        max_sequence_length=sequence_length)
 
     bert_trainer_model = bert_pretrainer.BertPretrainerV2(
         encoder_network=test_network,
@@ -200,10 +193,10 @@ class BertPretrainerV2Test(keras_parameterized.TestCase):
     num_token_predictions = 20
     # Create a set of 2-dimensional inputs (the first dimension is implicit).
     inputs = dict(
-        input_word_ids=tf.keras.Input(shape=(sequence_length,), dtype=tf.int32),
-        input_mask=tf.keras.Input(shape=(sequence_length,), dtype=tf.int32),
-        input_type_ids=tf.keras.Input(shape=(sequence_length,), dtype=tf.int32),
-        masked_lm_positions=tf.keras.Input(
+        input_word_ids=tf_keras.Input(shape=(sequence_length,), dtype=tf.int32),
+        input_mask=tf_keras.Input(shape=(sequence_length,), dtype=tf.int32),
+        input_type_ids=tf_keras.Input(shape=(sequence_length,), dtype=tf.int32),
+        masked_lm_positions=tf_keras.Input(
             shape=(num_token_predictions,), dtype=tf.int32))
 
     # Invoke the trainer model on the inputs. This causes the layer to be built.
@@ -213,10 +206,8 @@ class BertPretrainerV2Test(keras_parameterized.TestCase):
 
   def test_v2_serialize_deserialize(self):
     """Validate that the BERT trainer can be serialized and deserialized."""
-    # Build a transformer network to use within the BERT trainer. (Here, we use
-    # a short sequence_length for convenience.)
-    test_network = networks.BertEncoder(
-        vocab_size=100, num_layers=2, sequence_length=5)
+    # Build a transformer network to use within the BERT trainer.
+    test_network = networks.BertEncoderV2(vocab_size=100, num_layers=2)
 
     # Create a BERT trainer with the created network. (Note that all the args
     # are different, so we can catch any serialization mismatches.)

@@ -1,4 +1,4 @@
-# Copyright 2021 The Orbit Authors. All Rights Reserved.
+# Copyright 2026 The Orbit Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ import dataclasses
 from orbit import runner
 from orbit.utils import loop_fns
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 
 @dataclasses.dataclass(frozen=True)
@@ -83,7 +83,9 @@ class StandardTrainer(runner.AbstractTrainer, metaclass=abc.ABCMeta):
   `tf.function`, as determined by the `options` passed to `__init__`.
   """
 
-  def __init__(self, train_dataset, options: StandardTrainerOptions = None):
+  def __init__(self,
+               train_dataset,
+               options: Optional[StandardTrainerOptions] = None):
     """Initializes the `StandardTrainer` instance.
 
     Args:
@@ -256,12 +258,17 @@ class StandardEvaluator(runner.AbstractEvaluator, metaclass=abc.ABCMeta):
   is recommended in this case.
   """
 
-  def __init__(self, eval_dataset, options: StandardEvaluatorOptions = None):
+  def __init__(self,
+               eval_dataset,
+               options: Optional[StandardEvaluatorOptions] = None):
     """Initializes the `StandardEvaluator` instance.
 
     Args:
       eval_dataset: A `tf.nest`-compatible structure of `tf.data.Dataset` or
-        `DistributedDataset`.
+        `DistributedDataset`. On TPUs, if users want to exaust the dataset
+        without specifying number of eval steps, it is recommended to set
+        `drop_remainder=False` when batching the dataset, so the infrastructure
+        can handle the last partial batch properly.
       options: An `orbit.StandardEvaluatorOptions` instance.
     """
     options = options or StandardEvaluatorOptions()
@@ -353,7 +360,7 @@ class StandardEvaluator(runner.AbstractEvaluator, metaclass=abc.ABCMeta):
     Note that this method is called before dataset iterator creation.
 
     Returns:
-      An value to pass as the `state` argument to `eval_reduce`.
+      A value to pass as the `state` argument to `eval_reduce`.
     """
     pass
 
@@ -403,7 +410,7 @@ class StandardEvaluator(runner.AbstractEvaluator, metaclass=abc.ABCMeta):
     pass
 
   def eval_reduce(self,
-                  state: Any = None,
+                  state: Optional[Any] = None,
                   step_outputs: Optional[runner.Output] = None) -> Any:
     """A function to perform per-step reduction on the evaluation outputs.
 
@@ -414,7 +421,7 @@ class StandardEvaluator(runner.AbstractEvaluator, metaclass=abc.ABCMeta):
     evaluation for subsequent processing in `eval_end()`.
 
     Args:
-      state: A state being mainted throughout the evaluation.
+      state: A state being maintained throughout the evaluation.
       step_outputs: Outputs from the current evaluation step.
 
     Returns:

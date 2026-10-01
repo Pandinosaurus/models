@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 """Test decoding utility methods."""
 
 import abc
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.nlp.modeling.ops import decoding_module
 
@@ -29,6 +29,7 @@ class TestSubclass(decoding_module.DecodingModule, metaclass=abc.ABCMeta):
 
   def __init__(self,
                length_normalization_fn=length_normalization,
+               extra_cache_output=True,
                dtype=tf.float32):
     super(TestSubclass, self).__init__(
         length_normalization_fn=length_normalization, dtype=dtype)

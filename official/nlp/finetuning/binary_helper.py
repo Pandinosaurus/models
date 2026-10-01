@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from absl import logging
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.core import config_definitions as cfg
 from official.modeling import hyperparams
@@ -308,6 +308,48 @@ def write_glue_classification(task,
       else:
         # Classification.
         writer.write('%d\t%s\n' % (index, class_names[prediction]))
+
+
+def write_superglue_classification(task,
+                                   model,
+                                   input_file,
+                                   output_file,
+                                   predict_batch_size,
+                                   seq_length,
+                                   class_names,
+                                   label_type='int'):
+  """Makes classification predictions for superglue and writes to output file.
+
+  Args:
+    task: `Task` instance.
+    model: `keras.Model` instance.
+    input_file: Input test data file path.
+    output_file: Output test data file path.
+    predict_batch_size: Batch size for prediction.
+    seq_length: Input sequence length.
+    class_names: List of string class names.
+    label_type: String denoting label type ('int', 'float'), defaults to 'int'.
+  """
+  if label_type not in 'int':
+    raise ValueError('Unsupported `label_type`. Given: %s, expected `int` or '
+                     '`float`.' % label_type)
+
+  data_config = sentence_prediction_dataloader.SentencePredictionDataConfig(
+      input_path=input_file,
+      global_batch_size=predict_batch_size,
+      is_training=False,
+      seq_length=seq_length,
+      label_type=label_type,
+      drop_remainder=False,
+      include_example_id=True)
+  predictions = sentence_prediction.predict(task, data_config, model)
+
+  with tf.io.gfile.GFile(output_file, 'w') as writer:
+    for index, prediction in enumerate(predictions):
+      if label_type == 'int':
+        # Classification.
+        writer.write('{"idx": %d, "label": %s}\n' %
+                     (index, class_names[prediction]))
 
 
 def write_xtreme_classification(task,

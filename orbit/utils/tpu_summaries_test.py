@@ -1,4 +1,4 @@
-# Copyright 2021 The Orbit Authors. All Rights Reserved.
+# Copyright 2026 The Orbit Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import os
 from orbit.utils import common
 from orbit.utils import tpu_summaries
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 
 class TrainFunctionWithSummaries(tpu_summaries.OptionalSummariesFunction):
@@ -32,7 +32,7 @@ class TrainFunctionWithSummaries(tpu_summaries.OptionalSummariesFunction):
       num_steps -= 1
     if num_steps >= 1:
       output = self.without_summaries(num_steps)
-    return output
+    return output  # pyrefly: ignore[unbound-name]
 
 
 def train_function_with_summaries(function=None, **kwargs):
@@ -84,7 +84,7 @@ class TpuSummariesTest(tf.test.TestCase):
   def _validate_tpu_summary_optimization(self, function, *args, **kwargs):
     logdir = self.get_temp_dir()
     with tf.summary.create_file_writer(logdir).as_default():
-      with tf.summary.record_if(lambda: self.trainer.step_counter % 20 == 0):
+      with tf.summary.record_if(lambda: self.trainer.step_counter % 20 == 0):  # pyrefly: ignore[unsupported-operation]
         for _ in range(4):
           output = function(tf.constant(10), *args, **kwargs)
     events = self._get_events_from_logdir(logdir)

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,15 +14,12 @@
 
 """Tests for the customized Relu activation."""
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
-from tensorflow.python.keras import \
-  keras_parameterized  # pylint: disable=g-direct-tensorflow-import
 from official.modeling import activations
 
 
-@keras_parameterized.run_all_keras_modes
-class CustomizedReluTest(keras_parameterized.TestCase):
+class CustomizedReluTest(tf.test.TestCase):
 
   def test_relu6(self):
     features = [[.25, 0, -.25], [-1, -2, 3]]

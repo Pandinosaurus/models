@@ -1,4 +1,4 @@
-# Copyright 2021 The Orbit Authors. All Rights Reserved.
+# Copyright 2026 The Orbit Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,8 +14,11 @@
 
 """Defines exported symbols for the `orbit` package."""
 
+from orbit import actions
+# Internal import orbit.
 from orbit import utils
 
+from orbit.controller import Action
 from orbit.controller import Controller
 
 from orbit.runner import AbstractEvaluator

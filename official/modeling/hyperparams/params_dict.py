@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,10 +16,11 @@
 
 import collections
 import copy
+import logging
 import re
 
 import six
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 import yaml
 
 # regex pattern that matches on key-value pairs in a comma-separated
@@ -28,7 +29,7 @@ import yaml
 # values (e.g. floats, ints, etc.), and a lists within brackets.
 _PARAM_RE = re.compile(
     r"""
-  (?P<name>[a-zA-Z][\w\.]*)    # variable name: "var" or "x"
+  (?P<name>[a-zA-Z][\w\.]*)(?P<bracketed_index>\[?[0-9]*\]?)  # variable name: "var" or "x" followed by optional index: "[0]" or "[23]"
   \s*=\s*
   ((?P<val>\'(.*?)\'           # single quote
   |
@@ -40,6 +41,26 @@ _PARAM_RE = re.compile(
   ($|,\s*)""", re.VERBOSE)
 
 _CONST_VALUE_RE = re.compile(r'(\d.*|-\d.*|None)')
+
+# Yaml LOADER with an implicit resolver to parse float decimal and exponential
+# format. The regular experission parse the following cases:
+# 1- Decimal number with an optional exponential term.
+# 2- Integer number with an exponential term.
+# 3- Decimal number with an optional exponential term.
+# 4- Decimal number.
+
+_LOADER = yaml.FullLoader
+_LOADER.add_implicit_resolver(
+    'tag:yaml.org,2002:float',
+    re.compile(r'''
+    ^(?:[-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?
+    |
+    [-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
+    |
+    \\.[0-9_]+(?:[eE][-+][0-9]+)?
+    |
+    [-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*)$''', re.X),
+    list('-+0123456789.'))
 
 
 class ParamsDict(object):
@@ -172,6 +193,9 @@ class ParamsDict(object):
                          'To extend the existing keys, use '
                          '`override` with `is_strict` = False.'.format(k))
         else:
+          logging.warning(
+              'Adding new key `%s` to ParamsDict because is_strict=False.', k
+          )
           self._set(k, v)
       else:
         if isinstance(v, dict):
@@ -203,7 +227,7 @@ class ParamsDict(object):
     """Validate the parameters consistency based on the restrictions.
 
     This method validates the internal consistency using the pre-defined list of
-    restrictions. A restriction is defined as a string which specfiies a binary
+    restrictions. A restriction is defined as a string which specifies a binary
     operation. The supported binary operations are {'==', '!=', '<', '<=', '>',
     '>='}. Note that the meaning of these operators are consistent with the
     underlying Python immplementation. Users should make sure the define
@@ -268,51 +292,51 @@ class ParamsDict(object):
         _, left_v, _, right_v = _get_kvs(tokens, params_dict)
         if left_v != right_v:
           raise KeyError(
-              'Found inconsistncy between key `{}` and key `{}`.'.format(
+              'Found inconsistency between key `{}` and key `{}`.'.format(
                   tokens[0], tokens[1]))
       elif '!=' in restriction:
         tokens = restriction.split('!=')
         _, left_v, _, right_v = _get_kvs(tokens, params_dict)
         if left_v == right_v:
           raise KeyError(
-              'Found inconsistncy between key `{}` and key `{}`.'.format(
-                  tokens[0], tokens[1]))
-      elif '<' in restriction:
-        tokens = restriction.split('<')
-        _, left_v, _, right_v = _get_kvs(tokens, params_dict)
-        if left_v >= right_v:
-          raise KeyError(
-              'Found inconsistncy between key `{}` and key `{}`.'.format(
+              'Found inconsistency between key `{}` and key `{}`.'.format(
                   tokens[0], tokens[1]))
       elif '<=' in restriction:
         tokens = restriction.split('<=')
         _, left_v, _, right_v = _get_kvs(tokens, params_dict)
         if left_v > right_v:
           raise KeyError(
-              'Found inconsistncy between key `{}` and key `{}`.'.format(
+              'Found inconsistency between key `{}` and key `{}`.'.format(
                   tokens[0], tokens[1]))
-      elif '>' in restriction:
-        tokens = restriction.split('>')
+      elif '<' in restriction:
+        tokens = restriction.split('<')
         _, left_v, _, right_v = _get_kvs(tokens, params_dict)
-        if left_v <= right_v:
+        if left_v >= right_v:
           raise KeyError(
-              'Found inconsistncy between key `{}` and key `{}`.'.format(
+              'Found inconsistency between key `{}` and key `{}`.'.format(
                   tokens[0], tokens[1]))
       elif '>=' in restriction:
         tokens = restriction.split('>=')
         _, left_v, _, right_v = _get_kvs(tokens, params_dict)
         if left_v < right_v:
           raise KeyError(
-              'Found inconsistncy between key `{}` and key `{}`.'.format(
+              'Found inconsistency between key `{}` and key `{}`.'.format(
+                  tokens[0], tokens[1]))
+      elif '>' in restriction:
+        tokens = restriction.split('>')
+        _, left_v, _, right_v = _get_kvs(tokens, params_dict)
+        if left_v <= right_v:
+          raise KeyError(
+              'Found inconsistency between key `{}` and key `{}`.'.format(
                   tokens[0], tokens[1]))
       else:
         raise ValueError('Unsupported relation in restriction.')
 
 
-def read_yaml_to_params_dict(file_path):
+def read_yaml_to_params_dict(file_path: str):
   """Reads a YAML file to a ParamsDict."""
   with tf.io.gfile.GFile(file_path, 'r') as f:
-    params_dict = yaml.load(f, Loader=yaml.SafeLoader)
+    params_dict = yaml.load(f, Loader=_LOADER)
     return ParamsDict(params_dict)
 
 
@@ -365,6 +389,8 @@ def nested_csv_str_to_json_str(csv_str):
   if not csv_str:
     return ''
 
+  array_param_map = collections.defaultdict(str)
+  max_index_map = collections.defaultdict(str)
   formatted_entries = []
   nested_map = collections.defaultdict(list)
   pos = 0
@@ -378,6 +404,27 @@ def nested_csv_str_to_json_str(csv_str):
     m_dict = m.groupdict()
     name = m_dict['name']
     v = m_dict['val']
+    bracketed_index = m_dict['bracketed_index']
+    # If we reach the name of the array.
+    if bracketed_index and '.' not in name:
+      # Extract the array's index by removing '[' and ']'
+      index = int(bracketed_index[1:-1])
+      if '.' in v:
+        numeric_val = float(v)
+      else:
+        numeric_val = int(v)
+      # Add the value to the array.
+      if name not in array_param_map:
+        max_index_map[name] = index  # pyrefly: ignore[unsupported-operation]
+        array_param_map[name] = [None] * (index + 1)  # pyrefly: ignore[unsupported-operation]
+        array_param_map[name][index] = numeric_val  # pyrefly: ignore[unsupported-operation]
+      elif index < max_index_map[name]:  # pyrefly: ignore[unsupported-operation]
+        array_param_map[name][index] = numeric_val  # pyrefly: ignore[unsupported-operation]
+      else:
+        array_param_map[name] += [None] * (index - max_index_map[name])  # pyrefly: ignore[unsupported-operation]
+        array_param_map[name][index] = numeric_val  # pyrefly: ignore[unsupported-operation]
+        max_index_map[name] = index  # pyrefly: ignore[unsupported-operation]
+      continue
 
     # If a GCS path (e.g. gs://...) is provided, wrap this in quotes
     # as yaml.load would otherwise throw an exception
@@ -387,7 +434,10 @@ def nested_csv_str_to_json_str(csv_str):
     name_nested = name.split('.')
     if len(name_nested) > 1:
       grouping = name_nested[0]
-      value = '.'.join(name_nested[1:]) + '=' + v
+      if bracketed_index:
+        value = '.'.join(name_nested[1:]) + bracketed_index + '=' + v
+      else:
+        value = '.'.join(name_nested[1:]) + '=' + v
       nested_map[grouping].append(value)
     else:
       formatted_entries.append('%s : %s' % (name, v))
@@ -396,6 +446,13 @@ def nested_csv_str_to_json_str(csv_str):
     value = ','.join(value)
     value = nested_csv_str_to_json_str(value)
     formatted_entries.append('%s : %s' % (grouping, value))
+
+  # Add array parameters and check that the array is fully initialized.
+  for name in array_param_map:
+    if any(v is None for v in array_param_map[name]):
+      raise ValueError('Did not pass all values of array: %s' % name)
+    formatted_entries.append('%s : %s' % (name, array_param_map[name]))
+
   return '{' + ', '.join(formatted_entries) + '}'
 
 
@@ -433,12 +490,12 @@ def override_params_dict(params, dict_or_string_or_yaml_file, is_strict):
           nested_csv_str_to_json_str(dict_or_string_or_yaml_file))
     except ValueError:
       pass
-    params_dict = yaml.load(dict_or_string_or_yaml_file, Loader=yaml.FullLoader)
+    params_dict = yaml.load(dict_or_string_or_yaml_file, Loader=_LOADER)
     if isinstance(params_dict, dict):
       params.override(params_dict, is_strict)
     else:
       with tf.io.gfile.GFile(dict_or_string_or_yaml_file) as f:
-        params.override(yaml.load(f, Loader=yaml.FullLoader), is_strict)
+        params.override(yaml.load(f, Loader=_LOADER), is_strict)
   else:
     raise ValueError('Unknown input type to parse.')
   return params

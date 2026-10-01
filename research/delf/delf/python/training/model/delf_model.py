@@ -34,7 +34,9 @@ class AttentionModel(tf.keras.Model):
 
   Uses two [kernel_size x kernel_size] convolutions and softplus as activation
   to compute an attention map with the same resolution as the featuremap.
-  Features l2-normalized and aggregated using attention probabilites as weights.
+  Features l2-normalized and aggregated using attention probabilities as weights.
+  The features (targets) to be aggregated can be the input featuremap, or a
+  different one with the same resolution.
   """
 
   def __init__(self, kernel_size=1, decay=_DECAY, name='attention'):
@@ -65,7 +67,7 @@ class AttentionModel(tf.keras.Model):
         name='attn_conv2')
     self.activation_layer = layers.Activation('softplus')
 
-  def call(self, inputs, training=True):
+  def call(self, inputs, targets=None, training=True):
     x = self.conv1(inputs)
     x = self.bn_conv1(x, training=training)
     x = tf.nn.relu(x)
@@ -73,9 +75,13 @@ class AttentionModel(tf.keras.Model):
     score = self.conv2(x)
     prob = self.activation_layer(score)
 
+    # Aggregate inputs if targets is None.
+    if targets is None:
+      targets = inputs
+
     # L2-normalize the featuremap before pooling.
-    inputs = tf.nn.l2_normalize(inputs, axis=-1)
-    feat = tf.reduce_mean(tf.multiply(inputs, prob), [1, 2], keepdims=False)
+    targets = tf.nn.l2_normalize(targets, axis=-1)
+    feat = tf.reduce_mean(tf.multiply(targets, prob), [1, 2], keepdims=False)
 
     return feat, prob, score
 
@@ -192,7 +198,7 @@ class Delf(tf.keras.Model):
 
     Args:
       images: Tensor containing the dataset on which to run the forward pass.
-      training: Indicator of wether the forward pass is running in training mode
+      training: Indicator of whether the forward pass is running in training mode
         or not.
 
     Returns:
@@ -208,8 +214,10 @@ class Delf(tf.keras.Model):
     block3 = tf.stop_gradient(block3)
     if self._use_dim_reduction:
       (dim_expanded_features, dim_reduced_features) = self.autoencoder(block3)
-      attn_prelogits, attn_scores, _ = self.attention(dim_expanded_features,
-                                                      training=training)
+      attn_prelogits, attn_scores, _ = self.attention(
+          block3,
+          targets=dim_expanded_features,
+          training=training)
     else:
       attn_prelogits, attn_scores, _ = self.attention(block3, training=training)
       dim_expanded_features = None

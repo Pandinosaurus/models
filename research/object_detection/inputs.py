@@ -21,6 +21,7 @@ from __future__ import print_function
 import functools
 
 import tensorflow.compat.v1 as tf
+from tensorflow.compat.v1 import estimator as tf_estimator
 from object_detection.builders import dataset_builder
 from object_detection.builders import image_resizer_builder
 from object_detection.builders import model_builder
@@ -53,18 +54,20 @@ INPUT_BUILDER_UTIL_MAP = {
 }
 
 
-def _multiclass_scores_or_one_hot_labels(multiclass_scores,
-                                         groundtruth_boxes,
+def _multiclass_scores_or_one_hot_labels(multiclass_scores, groundtruth_boxes,
                                          groundtruth_classes, num_classes):
   """Returns one-hot encoding of classes when multiclass_scores is empty."""
+
   # Replace groundtruth_classes tensor with multiclass_scores tensor when its
   # non-empty. If multiclass_scores is empty fall back on groundtruth_classes
   # tensor.
   def true_fn():
     return tf.reshape(multiclass_scores,
                       [tf.shape(groundtruth_boxes)[0], num_classes])
+
   def false_fn():
     return tf.one_hot(groundtruth_classes, num_classes)
+
   return tf.cond(tf.size(multiclass_scores) > 0, true_fn, false_fn)
 
 
@@ -131,8 +134,7 @@ def assert_or_prune_invalid_boxes(boxes):
       This is not supported on TPUs.
   """
 
-  ymin, xmin, ymax, xmax = tf.split(
-      boxes, num_or_size_splits=4, axis=1)
+  ymin, xmin, ymax, xmax = tf.split(boxes, num_or_size_splits=4, axis=1)
 
   height_check = tf.Assert(tf.reduce_all(ymax >= ymin), [ymin, ymax])
   width_check = tf.Assert(tf.reduce_all(xmax >= xmin), [xmin, xmax])
@@ -156,7 +158,8 @@ def transform_input_data(tensor_dict,
                          use_multiclass_scores=False,
                          use_bfloat16=False,
                          retain_original_image_additional_channels=False,
-                         keypoint_type_weight=None):
+                         keypoint_type_weight=None,
+                         image_classes_field_map_empty_to_ones=True):
   """A single function that is responsible for all input data transformations.
 
   Data transformation functions are applied in the following order.
@@ -205,6 +208,9 @@ def transform_input_data(tensor_dict,
     keypoint_type_weight: A list (of length num_keypoints) containing
       groundtruth loss weights to use for each keypoint. If None, will use a
       weight of 1.
+    image_classes_field_map_empty_to_ones: A boolean flag indicating if empty
+      image classes field indicates that all classes have been labeled on this
+      image [true] or none [false].
 
   Returns:
     A dictionary keyed by fields.InputDataFields containing the tensors obtained
@@ -228,11 +234,11 @@ def transform_input_data(tensor_dict,
     raise KeyError('groundtruth_labeled_classes and groundtruth_image_classes'
                    'are provided by the decoder, but only one should be set.')
 
-  for field, map_empty_to_ones in [
-      (labeled_classes_field, True),
-      (image_classes_field, True),
-      (verified_neg_classes_field, False),
-      (not_exhaustive_field, False)]:
+  for field, map_empty_to_ones in [(labeled_classes_field, True),
+                                   (image_classes_field,
+                                    image_classes_field_map_empty_to_ones),
+                                   (verified_neg_classes_field, False),
+                                   (not_exhaustive_field, False)]:
     if field in out_tensor_dict:
       out_tensor_dict[field] = _remove_unrecognized_classes(
           out_tensor_dict[field], unrecognized_label=-1)
@@ -479,6 +485,7 @@ def pad_input_data_to_static_shapes(tensor_dict,
       input_fields.groundtruth_instance_masks: [
           max_num_boxes, height, width
       ],
+      input_fields.groundtruth_instance_mask_weights: [max_num_boxes],
       input_fields.groundtruth_is_crowd: [max_num_boxes],
       input_fields.groundtruth_group_of: [max_num_boxes],
       input_fields.groundtruth_area: [max_num_boxes],
@@ -601,6 +608,8 @@ def augment_input_data(tensor_dict, data_augmentation_options):
 
   include_instance_masks = (fields.InputDataFields.groundtruth_instance_masks
                             in tensor_dict)
+  include_instance_mask_weights = (
+      fields.InputDataFields.groundtruth_instance_mask_weights in tensor_dict)
   include_keypoints = (fields.InputDataFields.groundtruth_keypoints
                        in tensor_dict)
   include_keypoint_visibilities = (
@@ -624,6 +633,7 @@ def augment_input_data(tensor_dict, data_augmentation_options):
           include_label_confidences=include_label_confidences,
           include_multiclass_scores=include_multiclass_scores,
           include_instance_masks=include_instance_masks,
+          include_instance_mask_weights=include_instance_mask_weights,
           include_keypoints=include_keypoints,
           include_keypoint_visibilities=include_keypoint_visibilities,
           include_dense_pose=include_dense_pose,
@@ -652,6 +662,7 @@ def _get_labels_dict(input_dict):
       fields.InputDataFields.groundtruth_keypoint_depths,
       fields.InputDataFields.groundtruth_keypoint_depth_weights,
       fields.InputDataFields.groundtruth_instance_masks,
+      fields.InputDataFields.groundtruth_instance_mask_weights,
       fields.InputDataFields.groundtruth_area,
       fields.InputDataFields.groundtruth_is_crowd,
       fields.InputDataFields.groundtruth_group_of,
@@ -663,7 +674,8 @@ def _get_labels_dict(input_dict):
       fields.InputDataFields.groundtruth_dp_surface_coords,
       fields.InputDataFields.groundtruth_track_ids,
       fields.InputDataFields.groundtruth_verified_neg_classes,
-      fields.InputDataFields.groundtruth_not_exhaustive_classes
+      fields.InputDataFields.groundtruth_not_exhaustive_classes,
+      fields.InputDataFields.groundtruth_image_classes,
   ]
 
   for key in optional_label_keys:
@@ -804,6 +816,9 @@ def train_input(train_config, train_input_config,
       labels[fields.InputDataFields.groundtruth_instance_masks] is a
         [batch_size, num_boxes, H, W] float32 tensor containing only binary
         values, which represent instance masks for objects.
+      labels[fields.InputDataFields.groundtruth_instance_mask_weights] is a
+        [batch_size, num_boxes] float32 tensor containing groundtruth weights
+        for each instance mask.
       labels[fields.InputDataFields.groundtruth_keypoints] is a
         [batch_size, num_boxes, num_keypoints, 2] float32 tensor containing
         keypoints for each box.
@@ -961,6 +976,9 @@ def eval_input(eval_config, eval_input_config, model_config,
       labels[fields.InputDataFields.groundtruth_instance_masks] is a
         [1, num_boxes, H, W] float32 tensor containing only binary values,
         which represent instance masks for objects.
+      labels[fields.InputDataFields.groundtruth_instance_mask_weights] is a
+        [1, num_boxes] float32 tensor containing groundtruth weights for each
+        instance mask.
       labels[fields.InputDataFields.groundtruth_weights] is a
         [batch_size, num_boxes, num_keypoints] float32 tensor containing
         groundtruth weights for the keypoints.
@@ -1031,7 +1049,9 @@ def eval_input(eval_config, eval_input_config, model_config,
         retain_original_image=eval_config.retain_original_images,
         retain_original_image_additional_channels=
         eval_config.retain_original_image_additional_channels,
-        keypoint_type_weight=keypoint_type_weight)
+        keypoint_type_weight=keypoint_type_weight,
+        image_classes_field_map_empty_to_ones=eval_config
+        .image_classes_field_map_empty_to_ones)
     tensor_dict = pad_input_data_to_static_shapes(
         tensor_dict=transform_data_fn(tensor_dict),
         max_num_boxes=eval_input_config.max_number_of_boxes,
@@ -1102,7 +1122,7 @@ def create_predict_input_fn(model_config, predict_input_config):
     true_image_shape = tf.expand_dims(
         input_dict[fields.InputDataFields.true_image_shape], axis=0)
 
-    return tf.estimator.export.ServingInputReceiver(
+    return tf_estimator.export.ServingInputReceiver(
         features={
             fields.InputDataFields.image: images,
             fields.InputDataFields.true_image_shape: true_image_shape},

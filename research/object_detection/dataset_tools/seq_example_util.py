@@ -32,6 +32,8 @@ def context_float_feature(ndarray):
   """
   feature = tf.train.Feature()
   for val in ndarray:
+    if isinstance(val, np.ndarray):
+      val = val.item()
     feature.float_list.value.append(val)
   return feature
 
@@ -47,6 +49,8 @@ def context_int64_feature(ndarray):
   """
   feature = tf.train.Feature()
   for val in ndarray:
+    if isinstance(val, np.ndarray):
+      val = val.item()
     feature.int64_list.value.append(val)
   return feature
 
@@ -81,7 +85,7 @@ def sequence_float_feature(ndarray):
   for row in ndarray:
     feature = feature_list.feature.add()
     if row.size:
-      feature.float_list.value[:] = row
+      feature.float_list.value[:] = np.ravel(row)
   return feature_list
 
 
@@ -98,7 +102,7 @@ def sequence_int64_feature(ndarray):
   for row in ndarray:
     feature = feature_list.feature.add()
     if row.size:
-      feature.int64_list.value[:] = row
+      feature.int64_list.value[:] = np.ravel(row)
   return feature_list
 
 
@@ -118,7 +122,7 @@ def sequence_bytes_feature(ndarray):
     feature = feature_list.feature.add()
     if row:
       row = [tf.compat.as_bytes(val) for val in row]
-      feature.bytes_list.value[:] = row
+      feature.bytes_list.value[:] = np.ravel(row)
   return feature_list
 
 
@@ -145,7 +149,7 @@ def boxes_to_box_components(bboxes):
   ymax_list = []
   xmax_list = []
   for bbox in bboxes:
-    if bbox != []:  # pylint: disable=g-explicit-bool-comparison
+    if len(bbox) != 0:
       bbox = np.array(bbox).astype(np.float32)
       ymin, xmin, ymax, xmax = np.split(bbox, 4, axis=1)
     else:

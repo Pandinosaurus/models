@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 """Beam search to find the translated sequence with the highest probability."""
 
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 
 def inf(dtype):
@@ -69,6 +69,9 @@ class _StateKeys(object):
   # At the beginning, all of the sequences in FINISHED_SEQ are filler values.
   # True -> finished sequence, False -> filler. Shape [batch_size, beam_size]
   FINISHED_FLAGS = "FINISHED_FLAGS"
+  # for prefix matching hack. The BS will only constraint the next token to
+  # where the mask is 1.
+  CONSTRAINT_MASK = "CONSTRAINT_MASK"
 
 
 def _expand_to_same_rank(tensor, target):
@@ -99,48 +102,58 @@ def _expand_to_same_rank(tensor, target):
 class SequenceBeamSearch(tf.Module):
   """Implementation of beam search loop."""
 
-  def __init__(self,
-               symbols_to_logits_fn,
-               vocab_size,
-               beam_size,
-               alpha,
-               max_decode_length,
-               eos_id,
-               padded_decode,
-               dtype=tf.float32):
+  def __init__(
+      self,
+      symbols_to_logits_fn,
+      vocab_size,
+      beam_size,
+      alpha,
+      max_decode_length,
+      eos_id,
+      padded_decode,
+      dtype=tf.float32,
+      noise_multiplier: float = 0.0,
+      decoding_name=None,
+  ):
     """Initialize sequence beam search.
 
     Args:
-      symbols_to_logits_fn: A function to provide logits, which is the
-        interface to the Transformer model. The passed in arguments are: ids ->
-          A tensor with shape [batch_size * beam_size, index]. index -> A
-          scalar. cache -> A nested dictionary of tensors [batch_size *
-          beam_size, ...].
-        The function must return a tuple of logits and the updated cache: logits
-          -> A tensor with shape [batch * beam_size, vocab_size]. updated cache
-          -> A nested dictionary with the same structure as the input cache.
+      symbols_to_logits_fn: A function to provide logits, which is the interface
+        to the Transformer model. The passed in arguments are: ids -> A tensor
+        with shape [batch_size * beam_size, index]. index -> A scalar. cache ->
+        A nested dictionary of tensors [batch_size * beam_size, ...]. The
+        function must return a tuple of logits and the updated cache: logits ->
+        A tensor with shape [batch * beam_size, vocab_size]. updated cache -> A
+        nested dictionary with the same structure as the input cache.
       vocab_size: An integer, the size of the vocabulary, used for topk
         computation.
       beam_size: An integer, number of beams for beam search.
       alpha: A float, defining the strength of length normalization.
       max_decode_length: An integer, the maximum number of steps to decode a
         sequence.
-      eos_id: An integer. ID of end of sentence token.
+      eos_id: An integer or a list. ID of end of sentence token.
       padded_decode: A bool, indicating if max_sequence_length padding is used
         for beam search.
       dtype: A tensorflow data type used for score computation. The default is
         tf.float32.
+      noise_multiplier: The amount of noise.
+      decoding_name: an optional name for the decoding loop tensors.
     """
     self.symbols_to_logits_fn = symbols_to_logits_fn
     self.vocab_size = vocab_size
     self.beam_size = beam_size
     self.alpha = alpha
     self.max_decode_length = max_decode_length
-    self.eos_id = eos_id
+    if isinstance(eos_id, list):
+      self.eos_id = eos_id
+    else:
+      self.eos_id = [eos_id]
     self.padded_decode = padded_decode
     self.dtype = tf.as_dtype(dtype)
+    self.decoding_name = decoding_name
+    self.noise_multiplier = noise_multiplier
 
-  def search(self, initial_ids, initial_cache):
+  def search(self, initial_ids, initial_cache, constraint_mask=None):
     """Beam search for sequences with highest scores.
 
     Args:
@@ -148,6 +161,9 @@ class SequenceBeamSearch(tf.Module):
         with shape [batch_size, 1]
       initial_cache: dictionary storing values to be passed into the
         symbols_to_logits_fn.
+      constraint_mask: a [vocab_size] tensor, with 1 represent prefix. During
+        autoregressive decoding, the first token should be among where the
+        constraint_mask is 1.
 
     Returns:
       finished_seq and finished_scores.
@@ -155,8 +171,9 @@ class SequenceBeamSearch(tf.Module):
     batch_size = (
         initial_ids.shape.as_list()[0]
         if self.padded_decode else tf.shape(initial_ids)[0])
-    state, state_shapes = self._create_initial_state(initial_ids, initial_cache,
-                                                     batch_size)
+    state, state_shapes = self._create_initial_state(
+        initial_ids, initial_cache, batch_size, constraint_mask=constraint_mask
+    )
 
     def _grow_alive_seq(state):
       """Grow alive sequences by one token, collect top 2*beam_size sequences.
@@ -194,6 +211,28 @@ class SequenceBeamSearch(tf.Module):
       flat_logits, flat_cache = self.symbols_to_logits_fn(
           flat_ids, i, flat_cache)
 
+      if _StateKeys.CONSTRAINT_MASK in state:
+        constraint_mask = state[_StateKeys.CONSTRAINT_MASK]
+        constraint_mask = tf.cond(
+            tf.equal(i, 0),
+            lambda: constraint_mask,
+            lambda: tf.ones_like(constraint_mask),
+        )
+        penalty = tf.cast(
+            tf.cast(constraint_mask != 1, tf.int32) * 999_999_999,
+            flat_logits.dtype,
+        )
+        flat_logits = flat_logits - penalty[tf.newaxis, :]
+      else:
+        constraint_mask = None
+
+      if self.noise_multiplier > 0:
+        noise = tf.random.uniform(flat_logits.shape, dtype=flat_logits.dtype)
+        # Generates standard Gumbel(0, 1) noise, GSE Tensors
+        noise = -tf.math.log(-tf.math.log(noise))
+        # NOMUTANTS -- may not impact final result.
+        flat_logits = flat_logits + noise * self.noise_multiplier
+
       # Unflatten logits to shape [batch_size, beam_size, vocab_size]
       logits = _unflatten_beam_dim(flat_logits, batch_size, self.beam_size)
       new_cache = tf.nest.map_structure(
@@ -204,7 +243,7 @@ class SequenceBeamSearch(tf.Module):
       candidate_log_probs = _log_prob_from_logits(logits)
 
       # Calculate new log probabilities if each of the alive sequences were
-      # extended # by the the candidate IDs.
+      # extended # by the candidate IDs.
       # Shape [batch_size, beam_size, vocab_size]
       log_probs = candidate_log_probs + tf.expand_dims(alive_log_probs, axis=2)
 
@@ -218,9 +257,9 @@ class SequenceBeamSearch(tf.Module):
       # Extract the alive sequences that generate the highest log probabilities
       # after being extended.
       topk_beam_indices = topk_indices // self.vocab_size
-      topk_seq, new_cache = _gather_beams([alive_seq, new_cache],
-                                          topk_beam_indices, batch_size,
-                                          beams_to_keep)
+      topk_seq, new_cache = self._gather_beams([alive_seq, new_cache],
+                                               topk_beam_indices, batch_size,
+                                               beams_to_keep)
 
       # Append the most probable IDs to the topk sequences
       topk_ids = topk_indices % self.vocab_size
@@ -233,7 +272,7 @@ class SequenceBeamSearch(tf.Module):
       else:
         topk_seq = tf.concat(
             [topk_seq, tf.expand_dims(topk_ids, axis=2)], axis=2)
-      return topk_seq, topk_log_probs, topk_ids, new_cache
+      return topk_seq, topk_log_probs, topk_ids, new_cache, constraint_mask
 
     def _get_new_alive_state(new_seq, new_log_probs, new_finished_flags,
                              new_cache):
@@ -259,9 +298,10 @@ class SequenceBeamSearch(tf.Module):
       new_log_probs += tf.cast(new_finished_flags,
                                self.dtype) * -inf(self.dtype)
 
-      top_alive_seq, top_alive_log_probs, top_alive_cache = _gather_topk_beams(
-          [new_seq, new_log_probs, new_cache], new_log_probs, batch_size,
-          self.beam_size)
+      _, topk_indexes = tf.nn.top_k(new_log_probs, k=self.beam_size)
+      top_alive_seq, top_alive_log_probs, top_alive_cache = (
+          self._gather_beams([new_seq, new_log_probs, new_cache],
+                             topk_indexes, batch_size, self.beam_size))
 
       return {
           _StateKeys.ALIVE_SEQ: top_alive_seq,
@@ -316,9 +356,10 @@ class SequenceBeamSearch(tf.Module):
       finished_flags = tf.concat([finished_flags, new_finished_flags], axis=1)
 
       # Return the finished sequences with the best scores.
+      _, topk_indexes = tf.nn.top_k(finished_scores, k=self.beam_size)
       top_finished_seq, top_finished_scores, top_finished_flags = (
-          _gather_topk_beams([finished_seq, finished_scores, finished_flags],
-                             finished_scores, batch_size, self.beam_size))
+          self._gather_beams([finished_seq, finished_scores, finished_flags],
+                             topk_indexes, batch_size, self.beam_size))
 
       return {
           _StateKeys.FINISHED_SEQ: top_finished_seq,
@@ -344,8 +385,15 @@ class SequenceBeamSearch(tf.Module):
         new state dictionary.
       """
       # Grow alive sequences by one token.
-      new_seq, new_log_probs, topk_ids, new_cache = _grow_alive_seq(state)
-      new_finished_flags = tf.equal(topk_ids, self.eos_id)
+      new_seq, new_log_probs, topk_ids, new_cache, constraint_mask = (
+          _grow_alive_seq(state)
+      )
+      new_finished_flags = tf.equal(topk_ids, self.eos_id[0])
+      for eos_id in self.eos_id[1:]:
+        one_finished_flags = tf.equal(topk_ids, eos_id)
+        new_finished_flags = tf.logical_or(
+            new_finished_flags, one_finished_flags
+        )
       # Collect top beam_size alive sequences
       alive_state = _get_new_alive_state(new_seq, new_log_probs,
                                          new_finished_flags, new_cache)
@@ -359,6 +407,8 @@ class SequenceBeamSearch(tf.Module):
       new_state = {_StateKeys.CUR_INDEX: state[_StateKeys.CUR_INDEX] + 1}
       new_state.update(alive_state)
       new_state.update(finished_state)
+      if constraint_mask is not None:
+        new_state[_StateKeys.CONSTRAINT_MASK] = constraint_mask
       return [new_state]
 
     finished_state = tf.nest.map_structure(
@@ -368,7 +418,8 @@ class SequenceBeamSearch(tf.Module):
             _search_step,
             loop_vars=[state],
             shape_invariants=[state_shapes],
-            parallel_iterations=1))
+            parallel_iterations=1,
+            name=self.decoding_name))
     finished_state = finished_state[0]
     return self._process_finished_state(finished_state)
 
@@ -390,7 +441,9 @@ class SequenceBeamSearch(tf.Module):
     finished_scores = tf.where(score_cond, finished_scores, alive_log_probs)
     return finished_seq, finished_scores
 
-  def _create_initial_state(self, initial_ids, initial_cache, batch_size):
+  def _create_initial_state(
+      self, initial_ids, initial_cache, batch_size, constraint_mask=None
+  ):
     """Return initial state dictionary and its shape invariants."""
     for key, value in initial_cache.items():
       for inner_value in tf.nest.flatten(value):
@@ -441,6 +494,8 @@ class SequenceBeamSearch(tf.Module):
         _StateKeys.FINISHED_SCORES: finished_scores,
         _StateKeys.FINISHED_FLAGS: finished_flags
     }
+    if constraint_mask is not None:
+      state[_StateKeys.CONSTRAINT_MASK] = constraint_mask
 
     # Create state invariants for each value in the state dictionary. Each
     # dimension must be a constant or None. A None dimension means either:
@@ -484,6 +539,10 @@ class SequenceBeamSearch(tf.Module):
           _StateKeys.FINISHED_FLAGS:
               tf.TensorShape([None, self.beam_size])
       }
+    if constraint_mask is not None:
+      state_shape_invariants[_StateKeys.CONSTRAINT_MASK] = tf.TensorShape(
+          [self.vocab_size]
+      )
 
     return state, state_shape_invariants
 
@@ -538,27 +597,69 @@ class SequenceBeamSearch(tf.Module):
         not_at_max_decode_length,
         tf.logical_not(worst_finished_score_better_than_best_alive_score))
 
+  @staticmethod
+  def _gather_beams(nested, beam_indices, batch_size, new_beam_size):
+    """Gather beams from nested structure of tensors.
 
-def sequence_beam_search(symbols_to_logits_fn,
-                         initial_ids,
-                         initial_cache,
-                         vocab_size,
-                         beam_size,
-                         alpha,
-                         max_decode_length,
-                         eos_id,
-                         padded_decode=False,
-                         dtype="float32"):
+    Each tensor in nested represents a batch of beams, where beam refers to a
+    single search state (beam search involves searching through multiple states
+    in parallel).
+
+    This function is used to gather the top beams, specified by
+    beam_indices, from the nested tensors.
+
+    Args:
+      nested: Nested structure (tensor, list, tuple or dict) containing tensors
+        with shape [batch_size, beam_size, ...].
+      beam_indices: int32 tensor with shape [batch_size, new_beam_size]. Each
+        value in beam_indices must be between [0, beam_size), and are not
+        necessarily unique.
+      batch_size: int size of batch
+      new_beam_size: int number of beams to be pulled from the nested tensors.
+
+    Returns:
+      Nested structure containing tensors with shape
+        [batch_size, new_beam_size, ...]
+    """
+    # Computes the i'th coordinate that contains the batch index for gather_nd.
+    # Batch pos is a tensor like [[0,0,0,0,],[1,1,1,1],..].
+    batch_pos = tf.range(batch_size * new_beam_size) // new_beam_size
+    batch_pos = tf.reshape(batch_pos, [batch_size, new_beam_size])
+
+    # Create coordinates to be passed to tf.gather_nd. Stacking creates a tensor
+    # with shape [batch_size, beam_size, 2], where the last dimension contains
+    # the (i, j) gathering coordinates.
+    coordinates = tf.stack([batch_pos, beam_indices], axis=2)
+
+    return tf.nest.map_structure(lambda state: tf.gather_nd(state, coordinates),
+                                 nested)
+
+
+def sequence_beam_search(
+    symbols_to_logits_fn,
+    initial_ids,
+    initial_cache,
+    vocab_size,
+    beam_size,
+    alpha,
+    max_decode_length,
+    eos_id,
+    padded_decode=False,
+    dtype="float32",
+    noise_multiplier: float = 0.0,
+    decoding_name=None,
+    constraint_mask=None,
+):
   """Search for sequence of subtoken ids with the largest probability.
 
   Args:
     symbols_to_logits_fn: A function that takes in ids, index, and cache as
       arguments. The passed in arguments will have shape: ids -> A tensor with
-        shape [batch_size * beam_size, index]. index -> A scalar. cache -> A
-        nested dictionary of tensors [batch_size * beam_size, ...].
-      The function must return a tuple of logits and new cache: logits -> A
-        tensor with shape [batch * beam_size, vocab_size]. new cache -> A nested
-        dictionary with the same shape/structure as the inputted cache.
+      shape [batch_size * beam_size, index]. index -> A scalar. cache -> A
+      nested dictionary of tensors [batch_size * beam_size, ...]. The function
+      must return a tuple of logits and new cache: logits -> A tensor with shape
+      [batch * beam_size, vocab_size]. new cache -> A nested dictionary with the
+      same shape/structure as the inputted cache.
     initial_ids: An int32 tensor with shape [batch_size]. Starting ids for each
       batch item.
     initial_cache: A dictionary, containing starting decoder variables
@@ -573,14 +674,28 @@ def sequence_beam_search(symbols_to_logits_fn,
       beam search.
     dtype: A tensorflow data type used for score computation. The default is
       tf.float32.
+    noise_multiplier: The amount of noise.
+    decoding_name: an optional name for the decoding loop tensors.
+    constraint_mask: The BS will only constraint the next token to where the
+      mask is 1.
 
   Returns:
     Top decoded sequences [batch_size, beam_size, max_decode_length]
     sequence scores [batch_size, beam_size]
   """
-  sbs = SequenceBeamSearch(symbols_to_logits_fn, vocab_size, beam_size, alpha,
-                           max_decode_length, eos_id, padded_decode, dtype)
-  return sbs.search(initial_ids, initial_cache)
+  sbs = SequenceBeamSearch(
+      symbols_to_logits_fn,
+      vocab_size,
+      beam_size,
+      alpha,
+      max_decode_length,
+      eos_id,
+      padded_decode,
+      dtype,
+      noise_multiplier,
+      decoding_name,
+  )
+  return sbs.search(initial_ids, initial_cache, constraint_mask=constraint_mask)
 
 
 def _log_prob_from_logits(logits):
@@ -663,46 +778,3 @@ def _unflatten_beam_dim(tensor, batch_size, beam_size):
   shape = _shape_list(tensor)
   new_shape = [batch_size, beam_size] + shape[1:]
   return tf.reshape(tensor, new_shape)
-
-
-def _gather_beams(nested, beam_indices, batch_size, new_beam_size):
-  """Gather beams from nested structure of tensors.
-
-  Each tensor in nested represents a batch of beams, where beam refers to a
-  single search state (beam search involves searching through multiple states
-  in parallel).
-
-  This function is used to gather the top beams, specified by
-  beam_indices, from the nested tensors.
-
-  Args:
-    nested: Nested structure (tensor, list, tuple or dict) containing tensors
-      with shape [batch_size, beam_size, ...].
-    beam_indices: int32 tensor with shape [batch_size, new_beam_size]. Each
-      value in beam_indices must be between [0, beam_size), and are not
-      necessarily unique.
-    batch_size: int size of batch
-    new_beam_size: int number of beams to be pulled from the nested tensors.
-
-  Returns:
-    Nested structure containing tensors with shape
-      [batch_size, new_beam_size, ...]
-  """
-  # Computes the i'th coodinate that contains the batch index for gather_nd.
-  # Batch pos is a tensor like [[0,0,0,0,],[1,1,1,1],..].
-  batch_pos = tf.range(batch_size * new_beam_size) // new_beam_size
-  batch_pos = tf.reshape(batch_pos, [batch_size, new_beam_size])
-
-  # Create coordinates to be passed to tf.gather_nd. Stacking creates a tensor
-  # with shape [batch_size, beam_size, 2], where the last dimension contains
-  # the (i, j) gathering coordinates.
-  coordinates = tf.stack([batch_pos, beam_indices], axis=2)
-
-  return tf.nest.map_structure(lambda state: tf.gather_nd(state, coordinates),
-                               nested)
-
-
-def _gather_topk_beams(nested, score_or_log_prob, batch_size, beam_size):
-  """Gather top beams from nested structure."""
-  _, topk_indexes = tf.nn.top_k(score_or_log_prob, k=beam_size)
-  return _gather_beams(nested, topk_indexes, batch_size, beam_size)

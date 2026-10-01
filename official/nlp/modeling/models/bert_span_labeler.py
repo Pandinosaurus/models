@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,13 +15,13 @@
 """BERT Question Answering model."""
 # pylint: disable=g-classes-have-attributes
 import collections
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.nlp.modeling import networks
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class BertSpanLabeler(tf.keras.Model):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class BertSpanLabeler(tf_keras.Model):
   """Span labeler model based on a BERT-style transformer-based encoder.
 
   This is an implementation of the network structure surrounding a transformer
@@ -80,10 +80,10 @@ class BertSpanLabeler(tf.keras.Model):
     # Use identity layers wrapped in lambdas to explicitly name the output
     # tensors. This allows us to use string-keyed dicts in Keras fit/predict/
     # evaluate calls.
-    start_logits = tf.keras.layers.Lambda(
+    start_logits = tf_keras.layers.Lambda(
         tf.identity, name='start_positions')(
             start_logits)
-    end_logits = tf.keras.layers.Lambda(
+    end_logits = tf_keras.layers.Lambda(
         tf.identity, name='end_positions')(
             end_logits)
 
@@ -109,7 +109,7 @@ class BertSpanLabeler(tf.keras.Model):
     # the config dict attribute. TF does not track immutable attrs which
     # do not contain Trackables, so by creating a config namedtuple instead of
     # a dict we avoid tracking it.
-    config_cls = collections.namedtuple('Config', config_dict.keys())
+    config_cls = collections.namedtuple('Config', config_dict.keys())  # pyrefly: ignore[bad-class-definition]
     self._config = config_cls(**config_dict)
     self.span_labeling = span_labeling
 

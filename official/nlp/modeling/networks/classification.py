@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,11 +15,12 @@
 """Classification and regression network."""
 # pylint: disable=g-classes-have-attributes
 import collections
-import tensorflow as tf
+import tensorflow as tf, tf_keras
+from tensorflow.python.util import deprecation
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class Classification(tf.keras.Model):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class Classification(tf_keras.Model):
   """Classification network head for BERT modeling.
 
   This network implements a simple classifier head based on a dense layer. If
@@ -39,6 +40,8 @@ class Classification(tf.keras.Model):
       `predictions`.
   """
 
+  @deprecation.deprecated(None, 'Classification as a network is deprecated. '
+                          'Please use the layers.ClassificationHead instead.')
   def __init__(self,
                input_width,
                num_classes,
@@ -46,10 +49,10 @@ class Classification(tf.keras.Model):
                output='logits',
                **kwargs):
 
-    cls_output = tf.keras.layers.Input(
+    cls_output = tf_keras.layers.Input(
         shape=(input_width,), name='cls_output', dtype=tf.float32)
 
-    logits = tf.keras.layers.Dense(
+    logits = tf_keras.layers.Dense(
         num_classes,
         activation=None,
         kernel_initializer=initializer,
@@ -59,11 +62,11 @@ class Classification(tf.keras.Model):
     if output == 'logits':
       output_tensors = logits
     elif output == 'predictions':
-      policy = tf.keras.mixed_precision.global_policy()
+      policy = tf_keras.mixed_precision.global_policy()
       if policy.name == 'mixed_bfloat16':
         # b/158514794: bf16 is not stable with post-softmax cross-entropy.
         policy = tf.float32
-      output_tensors = tf.keras.layers.Activation(
+      output_tensors = tf_keras.layers.Activation(
           tf.nn.log_softmax, dtype=policy)(
               logits)
     else:
@@ -71,7 +74,7 @@ class Classification(tf.keras.Model):
           ('Unknown `output` value "%s". `output` can be either "logits" or '
            '"predictions"') % output)
 
-    super(Classification, self).__init__(
+    super().__init__(
         inputs=[cls_output], outputs=output_tensors, **kwargs)
 
     # b/164516224
@@ -92,7 +95,7 @@ class Classification(tf.keras.Model):
     # the config dict attribute. TF does not track immutable attrs which
     # do not contain Trackables, so by creating a config namedtuple instead of
     # a dict we avoid tracking it.
-    config_cls = collections.namedtuple('Config', config_dict.keys())
+    config_cls = collections.namedtuple('Config', config_dict.keys())  # pyrefly: ignore[bad-class-definition]
     self._config = config_cls(**config_dict)
     self.logits = logits
 

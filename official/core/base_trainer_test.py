@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,14 +14,15 @@
 
 """Tests for tensorflow_models.core.trainers.trainer."""
 # pylint: disable=g-direct-tensorflow-import
+import gc
 import multiprocessing
 import os
 import sys
 
 from absl.testing import parameterized
-import numpy as np
+import orbit
 import portpicker
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from tensorflow.python.distribute import combinations
 from tensorflow.python.distribute import strategy_combinations
@@ -111,15 +112,14 @@ class MockAsyncTrainer(trainer_lib._AsyncTrainer):
         aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
 
     train_dataset = self.distribute_dataset(dataset_fn)
-    trainer_lib.orbit.StandardTrainer.__init__(
-        self, train_dataset, options=trainer_lib.orbit.StandardTrainerOptions())
+    orbit.StandardTrainer.__init__(
+        self, train_dataset, options=orbit.StandardTrainerOptions())
 
-    eval_dataset = self.distribute_dataset(dataset_fn)
-    trainer_lib.orbit.StandardEvaluator.__init__(
+    validation_dataset = self.distribute_dataset(dataset_fn)
+    orbit.StandardEvaluator.__init__(
         self,
-        eval_dataset,
-        options=trainer_lib.orbit.StandardEvaluatorOptions(
-            use_tf_while_loop=True))
+        validation_dataset,
+        options=orbit.StandardEvaluatorOptions(use_tf_while_loop=True))
 
   def train_loop_begin(self):
     self.global_step.assign(0)
@@ -165,6 +165,13 @@ class TrainerTest(tf.test.TestCase, parameterized.TestCase):
                 }
             })))
 
+  def tearDown(self):
+    gc.collect()
+    # This will only contain uncollectable garbage, i.e. reference cycles
+    # involving objects with __del__ defined.
+    self.assertEmpty(gc.garbage)
+    super().tearDown()
+
   def create_test_trainer(self, config, model_dir=None, task=None):
     task = task or mock_task.MockTask(config.task, logging_dir=model_dir)
     ckpt_exporter = train_lib.maybe_create_best_ckpt_exporter(config, model_dir)
@@ -185,6 +192,30 @@ class TrainerTest(tf.test.TestCase, parameterized.TestCase):
       self.assertIn('training_loss', logs)
       self.assertIn('learning_rate', logs)
 
+  @combinations.generate(all_strategy_combinations())
+  def test_trainer_passing_datasets(self, distribution):
+    with distribution.scope():
+      task = mock_task.MockTask(self._config)
+      train_dataset = orbit.utils.make_distributed_dataset(
+          distribution, task.build_inputs, self._config.task.train_data)
+      validation_dataset = orbit.utils.make_distributed_dataset(
+          distribution, task.build_inputs, self._config.task.validation_data)
+      self._config.task.train_data = None
+      self._config.task.validation_data = None
+      trainer = trainer_lib.Trainer(
+          self._config,
+          task,
+          model=task.build_model(),
+          optimizer=task.create_optimizer(self._config.trainer.optimizer_config,
+                                          self._config.runtime),
+          train_dataset=train_dataset,
+          validation_dataset=validation_dataset)
+    logs = trainer.train(tf.convert_to_tensor(5, dtype=tf.int32))
+    self.assertIn('training_loss', logs)
+    self.assertIn('learning_rate', logs)
+    logs = trainer.evaluate(tf.convert_to_tensor(5, dtype=tf.int32))
+    self.assertIn('validation_loss', logs)
+
   def test_base_async_trainer(self):
     if TPU_TEST or GPU_TEST:
       self.skipTest('Aysnc training is not available on GPU/GPU.')
@@ -204,7 +235,7 @@ class TrainerTest(tf.test.TestCase, parameterized.TestCase):
 
   def test_async_trainer_train(self):
     if TPU_TEST or GPU_TEST:
-      self.skipTest('Aysnc training is not available on GPU/GPU.')
+      self.skipTest('Aysnc training is not available on GPU/TPU.')
     num_workers = 3
     num_ps = 2
     cluster_resolver = create_in_process_cluster(num_workers, num_ps)
@@ -279,13 +310,18 @@ class TrainerTest(tf.test.TestCase, parameterized.TestCase):
                 },
             })))
     trainer = self.create_test_trainer(config)
-    if mixed_precision_dtype != 'float16':
-      self.assertIsInstance(trainer.optimizer, tf.keras.optimizers.SGD)
-    elif mixed_precision_dtype == 'float16' and loss_scale is None:
-      self.assertIsInstance(trainer.optimizer, tf.keras.optimizers.SGD)
-    else:
+    if mixed_precision_dtype == 'float16':
       self.assertIsInstance(trainer.optimizer,
-                            tf.keras.mixed_precision.LossScaleOptimizer)
+                            tf_keras.mixed_precision.LossScaleOptimizer)
+      if loss_scale in (None, 'dynamic'):
+        self.assertTrue(trainer.optimizer.dynamic)
+      else:
+        self.assertFalse(trainer.optimizer.dynamic)
+        self.assertEqual(trainer.optimizer.initial_scale, loss_scale)
+    else:
+      self.assertIsInstance(
+          trainer.optimizer,
+          (tf_keras.optimizers.SGD, tf_keras.optimizers.legacy.SGD))
 
     metrics = trainer.train(tf.convert_to_tensor(5, dtype=tf.int32))
     self.assertIn('training_loss', metrics)
@@ -310,65 +346,10 @@ class TrainerTest(tf.test.TestCase, parameterized.TestCase):
     self.assertTrue(
         tf.io.gfile.exists(os.path.join(model_dir, 'best_ckpt', 'info.json')))
 
-  def test_recovery(self):
-    config = cfg.ExperimentConfig(
-        trainer=cfg.TrainerConfig(
-            loss_upper_bound=0.5,
-            recovery_max_trials=2,
-            optimizer_config=cfg.OptimizationConfig({
-                'optimizer': {
-                    'type': 'sgd'
-                },
-                'learning_rate': {
-                    'type': 'constant'
-                }
-            })))
-    model_dir = self.get_temp_dir()
-    trainer = self.create_test_trainer(config, model_dir=model_dir)
-    checkpoint_manager = tf.train.CheckpointManager(
-        trainer.checkpoint, self.get_temp_dir(), max_to_keep=2)
-    checkpoint_manager.save()
-    trainer.add_recovery(config.trainer, checkpoint_manager=checkpoint_manager)
-    before_weights = trainer.model.get_weights()
-    _ = trainer.train(tf.convert_to_tensor(1, dtype=tf.int32))
-    # The training loss is 1.0 and upper_bound is 0.5, so the recover happens.
-    after_weights = trainer.model.get_weights()
-    for left, right in zip(before_weights, after_weights):
-      self.assertAllEqual(left, right)
-
-    # Let's the loss be NaN and max_trials = 0 to see RuntimeError.
-    config = cfg.ExperimentConfig(
-        trainer=cfg.TrainerConfig(
-            recovery_max_trials=0,
-            optimizer_config=cfg.OptimizationConfig({
-                'optimizer': {
-                    'type': 'sgd'
-                },
-                'learning_rate': {
-                    'type': 'constant'
-                }
-            })))
-    task = mock_task.MockTask(config.task, logging_dir=model_dir)
-
-    def build_losses(labels, model_outputs, aux_losses=None):
-      del labels, model_outputs
-      return tf.constant([np.nan], tf.float32) + aux_losses
-
-    task.build_losses = build_losses
-    trainer = trainer_lib.Trainer(
-        config,
-        task,
-        model=task.build_model(),
-        optimizer=task.create_optimizer(config.trainer.optimizer_config,
-                                        config.runtime))
-    trainer.add_recovery(config.trainer, checkpoint_manager=checkpoint_manager)
-    with self.assertRaises(RuntimeError):
-      _ = trainer.train(tf.convert_to_tensor(2, dtype=tf.int32))
-
   def test_model_with_compiled_loss(self):
     task = mock_task.MockTask()
     model = task.build_model()
-    model.compile(loss=tf.keras.losses.CategoricalCrossentropy())
+    model.compile(loss=tf_keras.losses.CategoricalCrossentropy())
     trainer = trainer_lib.Trainer(
         self._config,
         task,

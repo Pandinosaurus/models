@@ -50,7 +50,7 @@ class CreateCocoTFRecordTest(tf.test.TestCase):
 
   def test_create_tf_example(self):
     image_file_name = 'tmp_image.jpg'
-    image_data = np.random.rand(256, 256, 3)
+    image_data = np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8)
     tmp_dir = self.get_temp_dir()
     save_path = os.path.join(tmp_dir, image_file_name)
     image = PIL.Image.fromarray(image_data, 'RGB')
@@ -124,7 +124,7 @@ class CreateCocoTFRecordTest(tf.test.TestCase):
 
   def test_create_tf_example_with_instance_masks(self):
     image_file_name = 'tmp_image.jpg'
-    image_data = np.random.rand(8, 8, 3)
+    image_data = np.random.randint(0, 256, (8, 8, 3), dtype=np.uint8)
     tmp_dir = self.get_temp_dir()
     save_path = os.path.join(tmp_dir, image_file_name)
     image = PIL.Image.fromarray(image_data, 'RGB')
@@ -440,7 +440,7 @@ class CreateCocoTFRecordTest(tf.test.TestCase):
     tmp_dir = self.get_temp_dir()
     image_paths = ['tmp1_image.jpg', 'tmp2_image.jpg']
     for image_path in image_paths:
-      image_data = np.random.rand(256, 256, 3)
+      image_data = np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8)
       save_path = os.path.join(tmp_dir, image_path)
       image = PIL.Image.fromarray(image_data, 'RGB')
       image.save(save_path)

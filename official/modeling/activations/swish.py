@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,10 +14,10 @@
 
 """Customized Swish activation."""
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
+@tf_keras.utils.register_keras_serializable(package='Text')
 def simple_swish(features):
   """Computes the Swish activation function.
 
@@ -38,7 +38,7 @@ def simple_swish(features):
   return features * tf.nn.sigmoid(features)
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
+@tf_keras.utils.register_keras_serializable(package='Text')
 def hard_swish(features):
   """Computes a hard version of the swish function.
 
@@ -52,10 +52,11 @@ def hard_swish(features):
     The activation value.
   """
   features = tf.convert_to_tensor(features)
-  return features * tf.nn.relu6(features + tf.constant(3.)) * (1. / 6.)
+  fdtype = features.dtype
+  return features * tf.nn.relu6(features + tf.cast(3., fdtype)) * (1. / 6.)
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
+@tf_keras.utils.register_keras_serializable(package='Text')
 def identity(features):
   """Computes the identity function.
 

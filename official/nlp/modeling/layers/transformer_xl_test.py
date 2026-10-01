@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,11 +14,11 @@
 
 """Tests for Transformer XL."""
 
+from absl.testing import parameterized
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from tensorflow.python.distribute import combinations
-from tensorflow.python.keras import keras_parameterized  # pylint: disable=g-direct-tensorflow-import
 
 from official.nlp.modeling.layers import transformer_xl
 
@@ -115,8 +115,7 @@ def create_mock_transformer_xl_data(
   return data
 
 
-@keras_parameterized.run_all_keras_modes
-class TransformerXLBlockTest(keras_parameterized.TestCase):
+class TransformerXLBlockTest(tf.test.TestCase, parameterized.TestCase):
 
   @combinations.generate(combinations.combine(
       memory_length=[0, 4],
@@ -186,8 +185,7 @@ class TransformerXLBlockTest(keras_parameterized.TestCase):
     self.assertEqual(transformer_xl_block_config, new_block.get_config())
 
 
-@keras_parameterized.run_all_keras_modes
-class TransformerXLTest(keras_parameterized.TestCase):
+class TransformerXLTest(tf.test.TestCase, parameterized.TestCase):
 
   @combinations.generate(combinations.combine(
       two_stream=[True, False],
@@ -233,7 +231,7 @@ class TransformerXLTest(keras_parameterized.TestCase):
         inner_size=inner_size,
         dropout_rate=0.,
         attention_dropout_rate=0.,
-        initializer=tf.keras.initializers.RandomNormal(stddev=0.1),
+        initializer=tf_keras.initializers.RandomNormal(stddev=0.1),
         two_stream=two_stream,
         tie_attention_biases=tie_attention_biases,
         memory_length=memory_length,
@@ -246,7 +244,7 @@ class TransformerXLTest(keras_parameterized.TestCase):
     else:
       self.assertEqual(attention_output.shape,
                        [batch_size, seq_length, hidden_size])
-    self.assertEqual(len(cached_memory_states), num_layers)
+    self.assertLen(cached_memory_states, num_layers)
 
   def test_get_config(self):
     transformer_xl_layer = transformer_xl.TransformerXL(
@@ -258,7 +256,7 @@ class TransformerXLTest(keras_parameterized.TestCase):
         inner_size=12,
         dropout_rate=0.,
         attention_dropout_rate=0.,
-        initializer=tf.keras.initializers.RandomNormal(stddev=0.1),
+        initializer=tf_keras.initializers.RandomNormal(stddev=0.1),
         two_stream=False,
         tie_attention_biases=True,
         memory_length=0,

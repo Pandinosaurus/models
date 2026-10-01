@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,139 +13,30 @@
 # limitations under the License.
 
 """Keras Layers for BERT-specific preprocessing."""
-from typing import Any, Dict, List, Optional, Union
+# pylint: disable=g-import-not-at-top
+from typing import Any, Dict, List, Mapping, Optional, Text, Union
 
 from absl import logging
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 try:
-  import tensorflow_text as text  # pylint: disable=g-import-not-at-top
+  # pytype: disable=import-error
+  import tensorflow_text as text
+  from tensorflow_text.python.ops import bert_tokenizer
+  # pytype: enable=import-error
 except ImportError:
   text = None
+  bert_tokenizer = None
 except tf.errors.NotFoundError as e:
   logging.warn("Encountered error when importing tensorflow_text: %s", e)
   text = None
+  bert_tokenizer = None
 
 
 def _check_if_tf_text_installed():
   if text is None:
     raise ImportError("import tensorflow_text failed, please install "
                       "'tensorflow-text-nightly'.")
-
-
-def _iterative_vectorized_fair_share(capacity: tf.Tensor,
-                                     limit: Union[int, tf.Tensor]):
-  """Iterative algorithm for max min fairness algorithm.
-
-  Reference: https://en.wikipedia.org/wiki/Max-min_fairness
-
-  The idea is for each example with some number of segments and a limit of
-  total segment length allowed, we grant each segment a fair share of the
-  limit. For example, if every segment has the same length, no work to do.
-  If one segment has below average length, its share will be spilt to others
-  fairly. In this way, the longest segment will be the shortest among all
-  potential capacity assignments.
-
-  Args:
-    capacity: A rank-2 Tensor of #Segments x Batch.
-    limit: The largest permissible number of tokens in total across one example.
-
-  Returns:
-    A rank-2 Tensor with new segment capacity assignment such that
-      the total number of tokens in each example does not exceed the `limit`.
-  """
-  # Firstly, we calculate the lower bound of the capacity assignment.
-  per_seg_limit = limit // capacity.shape[0]
-  limit_mask = tf.ones(capacity.shape, dtype=tf.int64) * per_seg_limit
-  lower_bound = tf.minimum(capacity, limit_mask)
-
-  # This step makes up the capacity that already statisfy the capacity limit.
-  remaining_cap_sum = limit - tf.math.reduce_sum(lower_bound, axis=0)
-  remaining_cap_mat = capacity - lower_bound
-  new_cap = lower_bound + remaining_cap_mat * tf.cast(
-      tf.math.reduce_sum(remaining_cap_mat, axis=0) <= remaining_cap_sum,
-      tf.int64)
-
-  # Process iteratively. This step is O(#segments), see analysis below.
-  while True:
-    remaining_limit = limit - tf.math.reduce_sum(new_cap, axis=0)
-    remaining_cap = capacity - new_cap
-    masked_remaining_slots = tf.cast(remaining_cap > 0, tf.int64)
-    remaining_cap_col_slots = tf.reduce_sum(masked_remaining_slots, axis=0)
-    masked_remaining_limit = tf.cast(remaining_cap_col_slots > 0,
-                                     tf.int64) * remaining_limit
-    # Total remaining segment limit is different for each example.
-    per_seg_limit = masked_remaining_limit // (
-        tf.cast(remaining_cap_col_slots <= 0, tf.int64) +
-        remaining_cap_col_slots)  # +1 to make sure 0/0 = 0
-
-    # Note that for each step, there is at least one more segment being
-    # fulfilled or the loop is finished.
-    # The idea is, if remaining per example limit > smallest among segments,
-    # the smallest segment ask is fullfilled. Otherwise, all remaining segments
-    # are truncated, the assignment is finished.
-    if tf.math.reduce_sum(per_seg_limit) > 0:
-      remaining_slots_mat = tf.cast(remaining_cap > 0, tf.int64)
-      new_cap = new_cap + remaining_slots_mat * per_seg_limit
-    else:
-      # Leftover assignment of limit that is smaller than #slots.
-      new_remained_assignment_mask = tf.cast(
-          (tf.cumsum(masked_remaining_slots, axis=0) <= masked_remaining_limit)
-          & (masked_remaining_slots > 0), tf.int64)
-      new_cap = new_cap + new_remained_assignment_mask
-      break
-  return new_cap
-
-
-def round_robin_truncate_inputs(
-    inputs: Union[tf.RaggedTensor, List[tf.RaggedTensor]],
-    limit: Union[int, tf.Tensor],
-) -> Union[tf.RaggedTensor, List[tf.RaggedTensor]]:
-  """Truncates a list of batched segments to fit a per-example length limit.
-
-  Available space is assigned one token at a time in a round-robin fashion
-  to the inputs that still need some, until the limit is reached.
-  (Or equivalently: the longest input is truncated by one token until the total
-  length of inputs fits the limit.) Examples that fit the limit as passed in
-  remain unchanged.
-
-  Args:
-    inputs: A list of rank-2 RaggedTensors. The i-th example is given by
-      the i-th row in each list element, that is, `inputs[:][i, :]`.
-    limit: The largest permissible number of tokens in total across one example.
-
-  Returns:
-    A list of rank-2 RaggedTensors at corresponding indices with the inputs,
-      in which the rows of each RaggedTensor have been truncated such that
-      the total number of tokens in each example does not exceed the `limit`.
-  """
-  if not isinstance(inputs, (list, tuple)):
-    return round_robin_truncate_inputs([inputs], limit)[0]
-  limit = tf.cast(limit, tf.int64)
-  if not all(rt.shape.rank == 2 for rt in inputs):
-    raise ValueError("All inputs must have shape [batch_size, (items)]")
-  if len(inputs) == 1:
-    return [_truncate_row_lengths(inputs[0], limit)]
-  elif len(inputs) == 2:
-    size_a, size_b = [rt.row_lengths() for rt in inputs]
-    # Here's a brain-twister: This does round-robin assignment of quota
-    # to both inputs until the limit is reached. Hint: consider separately
-    # the cases of zero, one, or two inputs exceeding half the limit.
-    floor_half = limit // 2
-    ceil_half = limit - floor_half
-    quota_a = tf.minimum(size_a, ceil_half + tf.nn.relu(floor_half - size_b))
-    quota_b = tf.minimum(size_b, floor_half + tf.nn.relu(ceil_half - size_a))
-    return [_truncate_row_lengths(inputs[0], quota_a),
-            _truncate_row_lengths(inputs[1], quota_b)]
-  else:
-    # Note that we don't merge with the 2 input case because the full algorithm
-    # is more expensive.
-    capacity = tf.stack([rt.row_lengths() for rt in inputs])  # #Segments x B
-    new_capacity = _iterative_vectorized_fair_share(capacity, limit)
-    return [
-        _truncate_row_lengths(inputs[i], new_capacity[i])
-        for i in range(capacity.shape[0])
-    ]
 
 
 def _truncate_row_lengths(ragged_tensor: tf.RaggedTensor,
@@ -167,8 +58,8 @@ def _truncate_row_lengths(ragged_tensor: tf.RaggedTensor,
   return result
 
 
-class BertTokenizer(tf.keras.layers.Layer):
-  """Wraps BertTokenizer with pre-defined vocab as a Keras Layer.
+class BertTokenizer(tf_keras.layers.Layer):
+  """Wraps TF.Text's BertTokenizer with pre-defined vocab as a Keras Layer.
 
   Attributes:
     tokenize_with_offsets: If true, calls
@@ -182,8 +73,9 @@ class BertTokenizer(tf.keras.layers.Layer):
 
   def __init__(self, *,
                vocab_file: str,
-               lower_case: bool,
+               lower_case: Optional[bool] = None,
                tokenize_with_offsets: bool = False,
+               tokenizer_kwargs: Optional[Mapping[Text, Any]] = None,
                **kwargs):
     """Initialize a `BertTokenizer` layer.
 
@@ -192,15 +84,18 @@ class BertTokenizer(tf.keras.layers.Layer):
         This is a text file with newline-separated wordpiece tokens.
         This layer initializes a lookup table from it that gets used with
         `text.BertTokenizer`.
-      lower_case: A Python boolean forwarded to `text.BertTokenizer`.
+      lower_case: Optional boolean forwarded to `text.BertTokenizer`.
         If true, input text is converted to lower case (where applicable)
         before tokenization. This must be set to match the way in which
-        the `vocab_file` was created.
+        the `vocab_file` was created. If passed, this overrides whatever value
+        may have been passed in `tokenizer_kwargs`.
       tokenize_with_offsets: A Python boolean. If true, this layer calls
         `text.BertTokenizer.tokenize_with_offsets()` instead of plain
         `text.BertTokenizer.tokenize()` and outputs a triple of
         `(tokens, start_offsets, limit_offsets)`
         insead of just tokens.
+      tokenizer_kwargs: Optional mapping with keyword arguments to forward to
+        `text.BertTokenizer`'s constructor.
       **kwargs: Standard arguments to `Layer()`.
 
     Raises:
@@ -222,8 +117,11 @@ class BertTokenizer(tf.keras.layers.Layer):
     self._special_tokens_dict = self._create_special_tokens_dict(
         self._vocab_table, vocab_file)
     super().__init__(**kwargs)
-    self._bert_tokenizer = text.BertTokenizer(
-        self._vocab_table, lower_case=lower_case)
+    tokenizer_kwargs = dict(tokenizer_kwargs or {})
+    if lower_case is not None:
+      tokenizer_kwargs["lower_case"] = lower_case
+    self._bert_tokenizer = text.BertTokenizer(self._vocab_table,  # pyrefly: ignore[missing-attribute]
+                                              **tokenizer_kwargs)
 
   @property
   def vocab_size(self):
@@ -337,7 +235,7 @@ class BertTokenizer(tf.keras.layers.Layer):
     return result
 
 
-class SentencepieceTokenizer(tf.keras.layers.Layer):
+class SentencepieceTokenizer(tf_keras.layers.Layer):
   """Wraps `tf_text.SentencepieceTokenizer` as a Keras Layer.
 
   Attributes:
@@ -419,7 +317,7 @@ class SentencepieceTokenizer(tf.keras.layers.Layer):
     self._special_tokens_dict = self._create_special_tokens_dict()
 
   def _create_tokenizer(self):
-    return text.SentencepieceTokenizer(
+    return text.SentencepieceTokenizer(  # pyrefly: ignore[missing-attribute]
         model=self._model_serialized_proto,
         out_type=tf.int32,
         nbest_size=self._nbest_size,
@@ -449,11 +347,11 @@ class SentencepieceTokenizer(tf.keras.layers.Layer):
       if self.tokenize_with_offsets:
         raise ValueError("`tokenize_with_offsets` is not supported yet when "
                          "`strip_diacritics` is set to True (b/181866850).")
-      inputs = text.normalize_utf8(inputs, "NFD")
+      inputs = text.normalize_utf8(inputs, "NFD")  # pyrefly: ignore[missing-attribute]
       inputs = tf.strings.regex_replace(inputs, r"\p{Mn}", "")
 
     if self._lower_case:
-      inputs = text.case_fold_utf8(inputs)
+      inputs = text.case_fold_utf8(inputs)  # pyrefly: ignore[missing-attribute]
 
     # Prepare to reshape the result to work around broken shape inference.
     batch_size = tf.shape(inputs)[0]
@@ -539,7 +437,7 @@ class SentencepieceTokenizer(tf.keras.layers.Layer):
     return result
 
 
-class BertPackInputs(tf.keras.layers.Layer):
+class BertPackInputs(tf_keras.layers.Layer):
   """Packs tokens into model inputs for BERT."""
 
   def __init__(self,
@@ -675,22 +573,22 @@ class BertPackInputs(tf.keras.layers.Layer):
     # fall back to some ad-hoc truncation.
     num_special_tokens = len(inputs) + 1
     if truncator == "round_robin":
-      trimmed_segments = round_robin_truncate_inputs(
-          inputs, seq_length - num_special_tokens)
+      trimmed_segments = text.RoundRobinTrimmer(seq_length -  # pyrefly: ignore[missing-attribute]
+                                                num_special_tokens).trim(inputs)
     elif truncator == "waterfall":
-      trimmed_segments = text.WaterfallTrimmer(
+      trimmed_segments = text.WaterfallTrimmer(  # pyrefly: ignore[missing-attribute]
           seq_length - num_special_tokens).trim(inputs)
     else:
       raise ValueError("Unsupported truncator: %s" % truncator)
     # Combine segments.
-    segments_combined, segment_ids = text.combine_segments(
+    segments_combined, segment_ids = text.combine_segments(  # pyrefly: ignore[missing-attribute]
         trimmed_segments,
         start_of_sequence_id=start_of_sequence_id,
         end_of_segment_id=end_of_segment_id)
     # Pad to dense Tensors.
-    input_word_ids, _ = text.pad_model_inputs(segments_combined, seq_length,
+    input_word_ids, _ = text.pad_model_inputs(segments_combined, seq_length,  # pyrefly: ignore[missing-attribute]
                                               pad_value=padding_id)
-    input_type_ids, input_mask = text.pad_model_inputs(segment_ids, seq_length,
+    input_type_ids, input_mask = text.pad_model_inputs(segment_ids, seq_length,  # pyrefly: ignore[missing-attribute]
                                                        pad_value=0)
     # Work around broken shape inference.
     output_shape = tf.stack([
@@ -702,3 +600,139 @@ class BertPackInputs(tf.keras.layers.Layer):
     return dict(input_word_ids=_reshape(input_word_ids),
                 input_mask=_reshape(input_mask),
                 input_type_ids=_reshape(input_type_ids))
+
+
+class FastWordpieceBertTokenizer(tf_keras.layers.Layer):
+  """A bert tokenizer keras layer using text.FastWordpieceTokenizer.
+
+  See details: "Fast WordPiece Tokenization" (https://arxiv.org/abs/2012.15524)
+  """
+
+  def __init__(self,
+               *,
+               vocab_file: str,
+               lower_case: bool,
+               tokenize_with_offsets: bool = False,
+               **kwargs):
+    """Initializes a FastWordpieceBertTokenizer layer.
+
+    Args:
+      vocab_file: A Python string with the path of the vocabulary file. This is
+        a text file with newline-separated wordpiece tokens. This layer loads
+        a list of tokens from it to create text.FastWordpieceTokenizer.
+      lower_case: A Python boolean forwarded to text.BasicTokenizer. If true,
+        input text is converted to lower case (where applicable) before
+        tokenization. This must be set to match the way in which the vocab_file
+        was created.
+      tokenize_with_offsets: A Python boolean. If true, this layer calls
+        FastWordpieceTokenizer.tokenize_with_offsets() instead of plain
+        .tokenize() and outputs a triple of (tokens, start_offsets,
+        limit_offsets) insead of just tokens.
+      **kwargs: standard arguments to Layer().
+    """
+    super().__init__(**kwargs)
+    logging.info("Initialize a FastWordpieceBertTokenizer.")
+    self.tokenize_with_offsets = tokenize_with_offsets
+    self._basic_tokenizer = bert_tokenizer.BasicTokenizer(lower_case=lower_case)  # pyrefly: ignore[missing-attribute]
+
+    # Read the vocab file into a list of tokens to create `fast_wp_tokenizer`.
+    self._vocab = [line.rstrip() for line in tf.io.gfile.GFile(vocab_file)]
+    self._fast_wp_tokenizer = text.FastWordpieceTokenizer(  # pyrefly: ignore[missing-attribute]
+        vocab=self._vocab, token_out_type=tf.int32, no_pretokenization=True)
+    self._special_tokens_dict = self._create_special_tokens_dict()
+
+  @property
+  def vocab_size(self):
+    return len(self._vocab)
+
+  def get_config(self):
+    # Skip in tf.saved_model.save(); fail if called direcly.
+    # We cannot just put the original, user-supplied vocab file name into
+    # the config, because the path has to change as the SavedModel is copied
+    # around.
+    raise NotImplementedError("Not implemented yet.")
+
+  def get_special_tokens_dict(self):
+    """Returns dict of token ids, keyed by standard names for their purpose.
+
+    Returns:
+      A dict from Python strings to Python integers. Each key is a standard
+      name for a special token describing its use. (For example, "padding_id"
+      is what BERT traditionally calls "[PAD]" but others may call "<pad>".)
+      The corresponding value is the integer token id. If a special token
+      is not found, its entry is omitted from the dict.
+
+      The supported keys and tokens are:
+        * start_of_sequence_id: looked up from "[CLS]"
+        * end_of_segment_id: looked up from "[SEP]"
+        * padding_id: looked up form "[PAD]"
+        * mask_id: looked up from "[MASK]"
+        * vocab_size: one past the largest token id used
+    """
+    return self._special_tokens_dict
+
+  def _create_special_tokens_dict(self):
+    """Creates dict of token ids, keyed by standard names for their purpose."""
+    special_tokens = {"vocab_size": self.vocab_size}
+
+    def add_special_token(key, token):
+      try:
+        token_id = self._vocab.index(token)
+        special_tokens[key] = token_id
+      except ValueError:
+        # Similar as nlp.modeling.layers.BertTokenizer, if a special token
+        # is not found, its entry is omitted from the dict.
+        logging.warning("Could not find %s as token \"%s\" in vocab file", key,
+                        token)
+
+    add_special_token("start_of_sequence_id", "[CLS]")
+    add_special_token("end_of_segment_id", "[SEP]")
+    add_special_token("padding_id", "[PAD]")
+    add_special_token("mask_id", "[MASK]")
+    return special_tokens
+
+  def _tokenize_with_offsets(self, text_input: tf.Tensor):
+    tokens, begin, _ = self._basic_tokenizer.tokenize_with_offsets(text_input)
+    wordpieces, wp_begin, wp_end = (
+        self._fast_wp_tokenizer.tokenize_with_offsets(tokens))
+    begin_expanded = tf.expand_dims(begin, axis=2)
+    final_begin = begin_expanded + wp_begin
+    final_end = begin_expanded + wp_end
+    return wordpieces, final_begin, final_end
+
+  def _tokenize(self, text_input: tf.Tensor):
+    tokens = self._basic_tokenizer.tokenize(text_input)
+    return self._fast_wp_tokenizer.tokenize(tokens)
+
+  def call(self, inputs: tf.Tensor):
+    """Calls text.BertTokenizer on inputs.
+
+    Args:
+      inputs: A string Tensor of shape [batch_size].
+
+    Returns:
+      One or three of RaggedTensors if tokenize_with_offsets is False or True,
+      respectively. These are
+      tokens: A RaggedTensor of shape [batch_size, (words), (pieces_per_word)]
+        and type int32. tokens[i,j,k] contains the k-th wordpiece of the
+        j-th word in the i-th input.
+      start_offsets, limit_offsets: If tokenize_with_offsets is True,
+        RaggedTensors of type int64 with the same indices as tokens.
+        Element [i,j,k] contains the byte offset at the start, or past the
+        end, resp., for the k-th wordpiece of the j-th word in the i-th input.
+    """
+    # Prepare to reshape the result to work around broken shape inference.
+    batch_size = tf.shape(inputs)[0]
+
+    def _reshape(rt):
+      values = rt.values
+      row_splits = rt.row_splits
+      row_splits = tf.reshape(row_splits, [batch_size + 1])
+      return tf.RaggedTensor.from_row_splits(values, row_splits)
+
+    if self.tokenize_with_offsets:
+      tokens, start_offsets, limit_offsets = self._tokenize_with_offsets(inputs)
+      return _reshape(tokens), _reshape(start_offsets), _reshape(limit_offsets)
+    else:
+      tokens = self._tokenize(inputs)
+      return _reshape(tokens)

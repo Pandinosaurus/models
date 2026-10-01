@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ class BaseOptimizerConfig(base_config.Config):
     clipvalue: float >= 0 or None. If not None, Gradients will be clipped when
       their absolute value exceeds this value.
     global_clipnorm: float >= 0 or None. If not None, gradient of all weights is
-        clipped so that their global norm is no higher than this value
+      clipped so that their global norm is no higher than this value
   """
   clipnorm: Optional[float] = None
   clipvalue: Optional[float] = None
@@ -40,7 +40,7 @@ class BaseOptimizerConfig(base_config.Config):
 class SGDConfig(BaseOptimizerConfig):
   """Configuration for SGD optimizer.
 
-  The attributes for this class matches the arguments of tf.keras.optimizer.SGD.
+  The attributes for this class matches the arguments of tf_keras.optimizer.SGD.
 
   Attributes:
     name: name of the optimizer.
@@ -54,12 +54,33 @@ class SGDConfig(BaseOptimizerConfig):
   momentum: float = 0.0
 
 
+# TODO(b/216129465): Merge this config with SGDConfig after the experimental
+# optimizer graduates.
+@dataclasses.dataclass
+class SGDExperimentalConfig(BaseOptimizerConfig):
+  """Configuration for SGD optimizer.
+
+  The attributes for this class matches the arguments of
+  `tf_keras.optimizer.experimental.SGD`.
+
+  Attributes:
+    name: name of the optimizer.
+    nesterov: nesterov for SGD optimizer.
+    momentum: momentum for SGD optimizer.
+    jit_compile: if True, jit compile will be used.
+  """
+  name: str = "SGD"
+  nesterov: bool = False
+  momentum: float = 0.0
+  jit_compile: bool = False
+
+
 @dataclasses.dataclass
 class RMSPropConfig(BaseOptimizerConfig):
   """Configuration for RMSProp optimizer.
 
   The attributes for this class matches the arguments of
-  tf.keras.optimizers.RMSprop.
+  tf_keras.optimizers.RMSprop.
 
   Attributes:
     name: name of the optimizer.
@@ -76,11 +97,29 @@ class RMSPropConfig(BaseOptimizerConfig):
 
 
 @dataclasses.dataclass
+class AdagradConfig(BaseOptimizerConfig):
+  """Configuration for Adagrad optimizer.
+
+  The attributes of this class match the arguments of
+  tf_keras.optimizer.Adagrad.
+
+  Attributes:
+    name: name of the optimizer.
+    initial_accumulator_value: A floating point value. Starting value for the
+      accumulators, must be non-negative.
+    epsilon: A small floating point value to avoid zero denominator.
+  """
+  name: str = "Adagrad"
+  initial_accumulator_value: float = 0.1
+  epsilon: float = 1e-07
+
+
+@dataclasses.dataclass
 class AdamConfig(BaseOptimizerConfig):
   """Configuration for Adam optimizer.
 
   The attributes for this class matches the arguments of
-  tf.keras.optimizer.Adam.
+  tf_keras.optimizer.Adam.
 
   Attributes:
     name: name of the optimizer.
@@ -95,6 +134,30 @@ class AdamConfig(BaseOptimizerConfig):
   beta_2: float = 0.999
   epsilon: float = 1e-07
   amsgrad: bool = False
+
+
+@dataclasses.dataclass
+class AdamExperimentalConfig(BaseOptimizerConfig):
+  """Configuration for experimental Adam optimizer.
+
+  The attributes for this class matches the arguments of
+  `tf_keras.optimizer.experimental.Adam`.
+
+  Attributes:
+    name: name of the optimizer.
+    beta_1: decay rate for 1st order moments.
+    beta_2: decay rate for 2st order moments.
+    epsilon: epsilon value used for numerical stability in Adam optimizer.
+    amsgrad: boolean. Whether to apply AMSGrad variant of this algorithm from
+      the paper "On the Convergence of Adam and beyond".
+    jit_compile: if True, jit compile will be used.
+  """
+  name: str = "Adam"
+  beta_1: float = 0.9
+  beta_2: float = 0.999
+  epsilon: float = 1e-07
+  amsgrad: bool = False
+  jit_compile: bool = False
 
 
 @dataclasses.dataclass
@@ -128,11 +191,36 @@ class AdamWeightDecayConfig(BaseOptimizerConfig):
 
 
 @dataclasses.dataclass
+class AdamWeightDecayExperimentalConfig(BaseOptimizerConfig):
+  """Configuration for Adam optimizer with weight decay.
+
+  Attributes:
+    name: name of the optimizer.
+    beta_1: decay rate for 1st order moments.
+    beta_2: decay rate for 2st order moments.
+    epsilon: epsilon value used for numerical stability in the optimizer.
+    amsgrad: boolean. Whether to apply AMSGrad variant of this algorithm from
+      the paper "On the Convergence of Adam and beyond".
+    weight_decay: float. Weight decay rate. Default to 0.
+    global_clipnorm: A positive float. Clips the gradients to this maximum
+      L2-norm. Default to 1.0.
+    jit_compile: if True, jit compile will be used.
+  """
+  name: str = "AdamWeightDecayExperimental"
+  beta_1: float = 0.9
+  beta_2: float = 0.999
+  epsilon: float = 1e-07
+  amsgrad: bool = False
+  weight_decay: float = 0.0
+  global_clipnorm: float = 1.0
+  jit_compile: bool = False
+
+
+@dataclasses.dataclass
 class LAMBConfig(BaseOptimizerConfig):
   """Configuration for LAMB optimizer.
 
-  The attributes for this class matches the arguments of
-  tensorflow_addons.optimizers.LAMB.
+  The attributes for this class matches the arguments of LAMB optimizer.
 
   Attributes:
     name: name of the optimizer.
@@ -162,11 +250,15 @@ class EMAConfig(BaseOptimizerConfig):
 
   Attributes:
     name: 'str', name of the optimizer.
+    trainable_weights_only: 'bool', if True, only model trainable weights will
+      be updated. Otherwise, all model weights will be updated. This mainly
+      affects batch normalization parameters.
     average_decay: 'float', average decay value.
     start_step: 'int', start step to apply moving average.
     dynamic_decay: 'bool', whether to apply dynamic decay or not.
   """
   name: str = "ExponentialMovingAverage"
+  trainable_weights_only: bool = True
   average_decay: float = 0.99
   start_step: int = 0
   dynamic_decay: bool = True
@@ -178,24 +270,23 @@ class LARSConfig(BaseOptimizerConfig):
 
   Attributes:
     name: 'str', name of the optimizer.
-    momentum: `float` hyperparameter >= 0 that accelerates gradient descent
-        in the relevant direction and dampens oscillations. Defaults to 0.9.
+    momentum: `float` hyperparameter >= 0 that accelerates gradient descent in
+      the relevant direction and dampens oscillations. Defaults to 0.9.
     eeta: `float` LARS coefficient as used in the paper. Default set to LARS
-        coefficient from the paper. (eeta / weight_decay) determines the
-        highest scaling factor in LARS..
+      coefficient from the paper. (eeta / weight_decay) determines the highest
+      scaling factor in LARS..
     weight_decay_rate: `float` for weight decay.
     nesterov: 'boolean' for whether to use nesterov momentum.
     classic_momentum: `boolean` for whether to use classic (or popular)
-        momentum. The learning rate is applied during momentum update in
-        classic momentum, but after momentum for popular momentum.
-    exclude_from_weight_decay: A list of `string` for variable screening, if
-        any of the string appears in a variable's name, the variable will be
-        excluded for computing weight decay. For example, one could specify
-        the list like ['batch_normalization', 'bias'] to exclude BN and bias
-        from weight decay.
-    exclude_from_layer_adaptation: Similar to exclude_from_weight_decay, but
-        for layer adaptation. If it is None, it will be defaulted the same as
-        exclude_from_weight_decay.
+      momentum. The learning rate is applied during momentum update in classic
+      momentum, but after momentum for popular momentum.
+    exclude_from_weight_decay: A list of `string` for variable screening, if any
+      of the string appears in a variable's name, the variable will be excluded
+      for computing weight decay. For example, one could specify the list like
+      ['batch_normalization', 'bias'] to exclude BN and bias from weight decay.
+    exclude_from_layer_adaptation: Similar to exclude_from_weight_decay, but for
+      layer adaptation. If it is None, it will be defaulted the same as
+      exclude_from_weight_decay.
   """
   name: str = "LARS"
   momentum: float = 0.9
@@ -205,3 +296,79 @@ class LARSConfig(BaseOptimizerConfig):
   classic_momentum: bool = True
   exclude_from_weight_decay: Optional[List[str]] = None
   exclude_from_layer_adaptation: Optional[List[str]] = None
+
+
+@dataclasses.dataclass
+class SLIDEConfig(BaseOptimizerConfig):
+  """Configuration for SLIDE optimizer.
+
+  Details coming soon.
+  """
+  name: str = "SLIDE"
+  beta_1: float = 0.9
+  beta_2: float = 0.999
+  epsilon: float = 1e-6
+  weight_decay_rate: float = 0.0
+  weight_decay_type: str = "inner"
+  exclude_from_weight_decay: Optional[List[str]] = None
+  exclude_from_layer_adaptation: Optional[List[str]] = None
+  include_in_sparse_layer_adaptation: Optional[List[str]] = None
+  sparse_layer_learning_rate: float = 0.1
+  do_gradient_rescaling: bool = True
+  norm_type: str = "layer"
+  ratio_clip_norm: float = 1e5
+
+
+@dataclasses.dataclass
+class AdafactorConfig(BaseOptimizerConfig):
+  """Configuration for Adafactor optimizer.
+
+  The attributes for this class matches the arguments of the Adafactor
+  implementation.
+  """
+  name: str = "Adafactor"
+  factored: bool = True
+  multiply_by_parameter_scale: bool = True
+  beta1: Optional[float] = None
+  decay_rate: float = 0.8
+  step_offset: int = 0
+  clipping_threshold: float = 1.0
+  min_dim_size_to_factor: int = 128
+  epsilon1: float = 1e-30
+  epsilon2: float = 1e-3
+  weight_decay: Optional[float] = None
+  include_in_weight_decay: Optional[str] = None
+
+
+@dataclasses.dataclass
+class AdafactorKerasConfig(BaseOptimizerConfig):
+  """Configuration for AdafactorKeras optimizer.
+
+  The attributes for this class matches the arguments of the Adafactor
+  implementation provided by keras.
+
+  Attributes:
+          learning_rate: Initial value for the learning rate: either a floating
+            point value, or a
+            `tf_keras.optimizers.schedules.LearningRateSchedule` instance.
+            Defaults to 0.001.
+        beta_2_decay: float, defaults to -0.8. The decay rate of `beta_2`.
+        epsilon_1: float, defaults to 1e-30. A small offset to keep denominator
+          away from 0.
+        epsilon_2: float, defaults to 1e-3. A small offset to avoid learning
+          rate becoming too small by time.
+        clip_threshold: float, defaults to 1.0. Clipping threshold. This is a
+          part of Adafactor algorithm, independent from `clipnorm`, `clipvalue`
+          and `global_clipnorm`.
+        relative_step: bool, defaults to True. If `learning_rate` is a constant
+          and `relative_step=True`, learning rate will be adjusted based on
+          current iterations. This is a default learning rate decay in
+          Adafactor.
+  """
+  name: str = "Adafactor"
+  learning_rate: float = 0.001
+  beta_2_decay: float = -0.8
+  epsilon_1: float = 1e-30
+  epsilon_2: float = 1e-3
+  clip_threshold: float = 1.0
+  relative_step: bool = True

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,14 +16,13 @@
 # pylint: disable=g-classes-have-attributes
 
 from typing import Tuple
-# Import libraries
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.modeling import tf_utils
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class MatMulWithMargin(tf.keras.layers.Layer):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class MatMulWithMargin(tf_keras.layers.Layer):
   """This layer computs a dot product matrix given two encoded inputs.
 
   Args:
@@ -36,7 +35,7 @@ class MatMulWithMargin(tf.keras.layers.Layer):
                logit_scale=1.0,
                logit_margin=0.0,
                **kwargs):
-    super(MatMulWithMargin, self).__init__(**kwargs)
+    super().__init__(**kwargs)
     self.logit_scale = logit_scale
     self.logit_margin = logit_margin
 
@@ -61,7 +60,7 @@ class MatMulWithMargin(tf.keras.layers.Layer):
     config = {
         'logit_scale': self.logit_scale,
         'logit_margin': self.logit_margin}
-    config.update(super(MatMulWithMargin, self).get_config())
+    config.update(super().get_config())
     return config
 
   @classmethod

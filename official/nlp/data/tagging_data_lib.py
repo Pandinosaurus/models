@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,10 +17,10 @@ import collections
 import os
 
 from absl import logging
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
-from official.nlp.bert import tokenization
 from official.nlp.data import classifier_data_lib
+from official.nlp.tools import tokenization
 
 # A negative label id for the padding label, which will not contribute
 # to loss/metrics in training.

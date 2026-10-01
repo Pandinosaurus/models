@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,11 +18,9 @@ import functools
 import json
 import os
 
-# Import libraries
 from absl import app
 from absl import flags
-import tensorflow as tf
-from official.nlp.bert import tokenization
+import tensorflow as tf, tf_keras
 from official.nlp.data import classifier_data_lib
 from official.nlp.data import sentence_retrieval_lib
 # word-piece tokenizer based squad_lib
@@ -30,10 +28,10 @@ from official.nlp.data import squad_lib as squad_lib_wp
 # sentence-piece tokenizer based squad_lib
 from official.nlp.data import squad_lib_sp
 from official.nlp.data import tagging_data_lib
+from official.nlp.tools import tokenization
 
 FLAGS = flags.FLAGS
 
-# TODO(chendouble): consider moving each task to its own binary.
 flags.DEFINE_enum(
     "fine_tuning_task_type", "classification",
     ["classification", "regression", "squad", "retrieval", "tagging"],
@@ -50,7 +48,7 @@ flags.DEFINE_enum(
     "classification_task_name", "MNLI", [
         "AX", "COLA", "IMDB", "MNLI", "MRPC", "PAWS-X", "QNLI", "QQP", "RTE",
         "SST-2", "STS-B", "WNLI", "XNLI", "XTREME-XNLI", "XTREME-PAWS-X",
-        "AX-g", "SUPERGLUE-RTE"
+        "AX-g", "SUPERGLUE-RTE", "CB", "BoolQ", "WIC"
     ], "The name of the task to train BERT classifier. The "
     "difference between XTREME-XNLI and XNLI is: 1. the format "
     "of input tsv files; 2. the dev set for XTREME is english "
@@ -166,15 +164,33 @@ flags.DEFINE_enum(
     "while ALBERT uses SentencePiece tokenizer.")
 
 flags.DEFINE_string(
-    "tfds_params", "", "Comma-separated list of TFDS parameter assigments for "
+    "tfds_params", "", "Comma-separated list of TFDS parameter assignments for "
     "generic classfication data import (for more details "
     "see the TfdsProcessor class documentation).")
 
 
 def generate_classifier_dataset():
   """Generates classifier dataset and returns input meta data."""
-  assert (FLAGS.input_data_dir and FLAGS.classification_task_name or
-          FLAGS.tfds_params)
+  if FLAGS.classification_task_name in [
+      "COLA",
+      "WNLI",
+      "SST-2",
+      "MRPC",
+      "QQP",
+      "STS-B",
+      "MNLI",
+      "QNLI",
+      "RTE",
+      "AX",
+      "SUPERGLUE-RTE",
+      "CB",
+      "BoolQ",
+      "WIC",
+  ]:
+    assert not FLAGS.input_data_dir or FLAGS.tfds_params
+  else:
+    assert (FLAGS.input_data_dir and FLAGS.classification_task_name or
+            FLAGS.tfds_params)
 
   if FLAGS.tokenization == "WordPiece":
     tokenizer = tokenization.FullTokenizer(
@@ -243,11 +259,17 @@ def generate_classifier_dataset():
         "ax-g":
             classifier_data_lib.AXgProcessor,
         "superglue-rte":
-            classifier_data_lib.SuperGLUERTEProcessor
+            classifier_data_lib.SuperGLUERTEProcessor,
+        "cb":
+            classifier_data_lib.CBProcessor,
+        "boolq":
+            classifier_data_lib.BoolQProcessor,
+        "wic":
+            classifier_data_lib.WnliProcessor,
     }
     task_name = FLAGS.classification_task_name.lower()
     if task_name not in processors:
-      raise ValueError("Task not found: %s" % (task_name))
+      raise ValueError("Task not found: %s" % (task_name,))
 
     processor = processors[task_name](process_text_fn=processor_text_fn)
     return classifier_data_lib.generate_tf_record_from_data_file(

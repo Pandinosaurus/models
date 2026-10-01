@@ -18,7 +18,7 @@ limitations under the License.
 
 #include "tflite_ops/quantization_util.h"  // seq_flow_lite
 
-namespace tflite {
+namespace seq_flow_lite {
 namespace ops {
 namespace custom {
 
@@ -131,11 +131,13 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
       const float unnormalized_attention = table[maxval - *logits];
       normalizer += unnormalized_attention;
       unnormalized_expected_value +=
-          unnormalized_attention * PodDequantizeValue(*values_t, *values);
+          unnormalized_attention *
+          PodDequantizeValue<uint8_t>(*values_t, *values);
     }
     const float expected_value = unnormalized_expected_value / normalizer;
     // Quantize and set the expected value in the output buffer.
-    output[i] = PodQuantize(expected_value, out_zero_point, out_inverse_scale);
+    output[i] =
+        PodQuantize<uint8_t>(expected_value, out_zero_point, out_inverse_scale);
   }
   return kTfLiteOk;
 }
@@ -156,4 +158,4 @@ TfLiteRegistration* Register_EXPECTED_VALUE() {
 
 }  // namespace custom
 }  // namespace ops
-}  // namespace tflite
+}  // namespace seq_flow_lite

@@ -12,12 +12,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_MODELS_SEQUENCE_PROJECTION_TFLITE_OPS_EXPECTED_VALUE_H_
-#define TENSORFLOW_MODELS_SEQUENCE_PROJECTION_TFLITE_OPS_EXPECTED_VALUE_H_
+#ifndef TENSORFLOW_MODELS_SEQ_FLOW_LITE_TFLITE_OPS_EXPECTED_VALUE_H_
+#define TENSORFLOW_MODELS_SEQ_FLOW_LITE_TFLITE_OPS_EXPECTED_VALUE_H_
 
 #include "tensorflow/lite/kernels/register.h"
 
-namespace tflite {
+namespace seq_flow_lite {
 namespace ops {
 namespace custom {
 
@@ -25,6 +25,6 @@ TfLiteRegistration* Register_EXPECTED_VALUE();
 
 }  // namespace custom
 }  // namespace ops
-}  // namespace tflite
+}  // namespace seq_flow_lite
 
-#endif  // TENSORFLOW_MODELS_SEQUENCE_PROJECTION_TFLITE_OPS_EXPECTED_VALUE_H_
+#endif  // TENSORFLOW_MODELS_SEQ_FLOW_LITE_TFLITE_OPS_EXPECTED_VALUE_H_

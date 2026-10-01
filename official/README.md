@@ -1,4 +1,6 @@
-![Logo](https://storage.googleapis.com/model_garden_artifacts/TF_Model_Garden.png)
+<div align="center">
+  <img src="https://storage.googleapis.com/tf_model_garden/tf_model_garden_logo.png">
+</div>
 
 # TensorFlow Official Models
 
@@ -12,6 +14,9 @@ being easy to read.
 These models are used as end-to-end tests, ensuring that the models run
 with the same or improved speed and performance with each new TensorFlow build.
 
+The API documentation of the latest stable release is published to
+[tensorflow.org](https://www.tensorflow.org/api_docs/python/tfm).
+
 ## More models to come!
 
 The team is actively developing new models.
@@ -20,6 +25,7 @@ In the near future, we will add:
 * State-of-the-art language understanding models.
 * State-of-the-art image classification models.
 * State-of-the-art object detection and instance segmentation models.
+* State-of-the-art video classification models.
 
 ## Table of Contents
 
@@ -27,151 +33,145 @@ In the near future, we will add:
   * [Computer Vision](#computer-vision)
     + [Image Classification](#image-classification)
     + [Object Detection and Segmentation](#object-detection-and-segmentation)
+    + [Video Classification](#video-classification)
   * [Natural Language Processing](#natural-language-processing)
   * [Recommendation](#recommendation)
 - [How to get started with the official models](#how-to-get-started-with-the-official-models)
+- [Contributions](#contributions)
 
 ## Models and Implementations
 
-### Computer Vision
+### [Computer Vision](vision/README.md)
 
 #### Image Classification
 
 | Model | Reference (Paper) |
 |-------|-------------------|
-| [MNIST](vision/image_classification) | A basic model to classify digits from the [MNIST dataset](http://yann.lecun.com/exdb/mnist/) |
-| [ResNet](vision/image_classification) | [Deep Residual Learning for Image Recognition](https://arxiv.org/abs/1512.03385) |
-| [ResNet-RS](vision/image_classification) | [Revisiting ResNets: Improved Training and Scaling Strategies](https://arxiv.org/abs/2103.07579) |
-| [EfficientNet](vision/image_classification) | [EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks](https://arxiv.org/abs/1905.11946) |
+| [ResNet](vision/MODEL_GARDEN.md) | [Deep Residual Learning for Image Recognition](https://arxiv.org/abs/1512.03385) |
+| [ResNet-RS](vision/MODEL_GARDEN.md) | [Revisiting ResNets: Improved Training and Scaling Strategies](https://arxiv.org/abs/2103.07579) |
+| [EfficientNet](vision/MODEL_GARDEN.md) | [EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks](https://arxiv.org/abs/1905.11946) |
+| [Vision Transformer](vision/MODEL_GARDEN.md) | [An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale](https://arxiv.org/abs/2010.11929) |
 
 #### Object Detection and Segmentation
 
 | Model | Reference (Paper) |
 |-------|-------------------|
-| [RetinaNet](vision/detection) | [Focal Loss for Dense Object Detection](https://arxiv.org/abs/1708.02002) |
-| [Mask R-CNN](vision/detection) | [Mask R-CNN](https://arxiv.org/abs/1703.06870) |
-| [ShapeMask](vision/detection) | [ShapeMask: Learning to Segment Novel Objects by Refining Shape Priors](https://arxiv.org/abs/1904.03239) |
-| [SpineNet](vision/detection) | [SpineNet: Learning Scale-Permuted Backbone for Recognition and Localization](https://arxiv.org/abs/1912.05027) |
+| [RetinaNet](vision/MODEL_GARDEN.md) | [Focal Loss for Dense Object Detection](https://arxiv.org/abs/1708.02002) |
+| [Mask R-CNN](vision/MODEL_GARDEN.md) | [Mask R-CNN](https://arxiv.org/abs/1703.06870) |
+| [YOLO](projects/yolo/README.md) | [YOLOv7: Trainable bag-of-freebies sets new state-of-the-art for real-time object detectors](https://arxiv.org/abs/2207.02696) |
+| [SpineNet](vision/MODEL_GARDEN.md) | [SpineNet: Learning Scale-Permuted Backbone for Recognition and Localization](https://arxiv.org/abs/1912.05027) |
+| [Cascade RCNN-RS and RetinaNet-RS](vision/MODEL_GARDEN.md) | [Simple Training Strategies and Model Scaling for Object Detection](https://arxiv.org/abs/2107.00057)|
 
-### Natural Language Processing
+#### Video Classification
 
 | Model | Reference (Paper) |
 |-------|-------------------|
-| [ALBERT (A Lite BERT)](nlp/albert) | [ALBERT: A Lite BERT for Self-supervised Learning of Language Representations](https://arxiv.org/abs/1909.11942) |
-| [BERT (Bidirectional Encoder Representations from Transformers)](nlp/bert) | [BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding](https://arxiv.org/abs/1810.04805) |
-| [NHNet (News Headline generation model)](nlp/nhnet) | [Generating Representative Headlines for News Stories](https://arxiv.org/abs/2001.09386) |
-| [Transformer](nlp/transformer) | [Attention Is All You Need](https://arxiv.org/abs/1706.03762) |
-| [XLNet](nlp/xlnet) | [XLNet: Generalized Autoregressive Pretraining for Language Understanding](https://arxiv.org/abs/1906.08237) |
-| [MobileBERT](nlp/projects/mobilebert) | [MobileBERT: a Compact Task-Agnostic BERT for Resource-Limited Devices](https://arxiv.org/abs/2004.02984) |
+| [Mobile Video Networks (MoViNets)](projects/movinet) | [MoViNets: Mobile Video Networks for Efficient Video Recognition](https://arxiv.org/abs/2103.11511) |
+
+### [Natural Language Processing](nlp/README.md)
+
+#### Pre-trained Language Model
+
+| Model | Reference (Paper) |
+|-------|-------------------|
+| [ALBERT](nlp/MODEL_GARDEN.md#available-model-configs) | [ALBERT: A Lite BERT for Self-supervised Learning of Language Representations](https://arxiv.org/abs/1909.11942) |
+| [BERT](nlp/MODEL_GARDEN.md#available-model-configs) | [BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding](https://arxiv.org/abs/1810.04805) |
+| [ELECTRA](nlp/tasks/electra_task.py) | [ELECTRA: Pre-training Text Encoders as Discriminators Rather Than Generators](https://arxiv.org/abs/2003.10555) |
+
+
+#### Neural Machine Translation
+
+| Model | Reference (Paper) |
+|-------|-------------------|
+| [Transformer](nlp/MODEL_GARDEN.md#available-model-configs) | [Attention Is All You Need](https://arxiv.org/abs/1706.03762) |
+
+#### Natural Language Generation
+
+| Model | Reference (Paper) |
+|-------|-------------------|
+| [NHNet (News Headline generation model)](projects/nhnet) | [Generating Representative Headlines for News Stories](https://arxiv.org/abs/2001.09386) |
+
+
+#### Knowledge Distillation
+
+| Model | Reference (Paper) |
+|-------|-------------------|
+| [MobileBERT](projects/mobilebert) | [MobileBERT: a Compact Task-Agnostic BERT for Resource-Limited Devices](https://arxiv.org/abs/2004.02984) |
 
 ### Recommendation
 
-| Model | Reference (Paper) |
-|-------|-------------------|
-| [NCF](recommendation) | [Neural Collaborative Filtering](https://arxiv.org/abs/1708.05031) |
+Model                            | Reference (Paper)
+-------------------------------- | -----------------
+[DLRM](recommendation/ranking)   | [Deep Learning Recommendation Model for Personalization and Recommendation Systems](https://arxiv.org/abs/1906.00091)
+[DCN v2](recommendation/ranking) | [Improved Deep & Cross Network and Practical Lessons for Web-scale Learning to Rank Systems](https://arxiv.org/abs/2008.13535)
+[NCF](recommendation)            | [Neural Collaborative Filtering](https://arxiv.org/abs/1708.05031)
 
 ## How to get started with the official models
 
-* The models in the master branch are developed using TensorFlow 2,
-and they target the TensorFlow [nightly binaries](https://github.com/tensorflow/tensorflow#installation)
-built from the
-[master branch of TensorFlow](https://github.com/tensorflow/tensorflow/tree/master).
-* The stable versions targeting releases of TensorFlow are available
-as tagged branches or [downloadable releases](https://github.com/tensorflow/models/releases).
-* Model repository version numbers match the target TensorFlow release,
-such that
-[release v2.2.0](https://github.com/tensorflow/models/releases/tag/v2.2.0)
-are compatible with
-[TensorFlow v2.2.0](https://github.com/tensorflow/tensorflow/releases/tag/v2.2.0).
+*   The official models in the master branch are developed using
+[master branch of TensorFlow 2](https://github.com/tensorflow/tensorflow/tree/master).
+When you clone (the repository) or download (`pip` binary) master branch of
+official models , master branch of TensorFlow gets downloaded as a
+dependency. This is equivalent to the following.
+
+```shell
+pip3 install tf-models-nightly
+pip3 install tensorflow-text-nightly # when model uses `nlp` packages
+```
+
+*   Incase of stable versions, targeting a specific release, Tensorflow-models
+repository version numbers match with the target TensorFlow release. For
+example, [TensorFlow-models v2.8.x](https://github.com/tensorflow/models/releases/tag/v2.8.0)
+is compatible with [TensorFlow v2.8.x](https://github.com/tensorflow/tensorflow/releases/tag/v2.8.0).
+This is equivalent to the following:
+
+```shell
+pip3 install tf-models-official==2.8.0
+pip3 install tensorflow-text==2.8.0 # when models in uses `nlp` packages
+```
+
+Starting from 2.9.x release, we release the modeling library as
+`tensorflow_models` package and users can `import tensorflow_models` directly to
+access to the exported symbols. If you are
+using the latest nightly version or github code directly, please follow the
+docstrings in the github.
 
 Please follow the below steps before running models in this repository.
 
 ### Requirements
 
-* The latest TensorFlow Model Garden release and TensorFlow 2
+* The latest TensorFlow Model Garden release and the latest TensorFlow 2
   * If you are on a version of TensorFlow earlier than 2.2, please
 upgrade your TensorFlow to [the latest TensorFlow 2](https://www.tensorflow.org/install/).
+* Python 3.7+
 
-```shell
-pip3 install tf-nightly
-```
+Our integration tests run with Python 3.7. Although Python 3.6 should work, we
+don't recommend earlier versions.
 
 ### Installation
 
-#### Method 1: Install the TensorFlow Model Garden pip package
+Please check [here](https://github.com/tensorflow/models#Installation) for the
+instructions.
 
-**tf-models-official** is the stable Model Garden package.
-pip will install all models and dependencies automatically.
+Available pypi packages:
 
-```shell
-pip install tf-models-official
-```
+* [tf-models-official](https://pypi.org/project/tf-models-official/)
+* [tf-models-nightly](https://pypi.org/project/tf-models-nightly/): nightly
+release with the latest changes.
+* [tf-models-no-deps](https://pypi.org/project/tf-models-no-deps/): without
+`tensorflow` and `tensorflow-text` in the `install_requires` list.
 
-If you are using nlp packages, please also install **tensorflow-text**:
+### Examples and Tutorials
 
-```shell
-pip install tensorflow-text
-```
+Get started with TensorFlow Model Garden by exploring the provided examples and tutorials:
 
-Please check out our [example](colab/fine_tuning_bert.ipynb)
-to learn how to use a PIP package.
+* [NLP](https://www.tensorflow.org/tfmodels/nlp)
+* [Image classification](https://www.tensorflow.org/tfmodels/vision/image_classification)
+* [Object detection](https://www.tensorflow.org/tfmodels/vision/object_detection)
+* [Semantic Segmentation](https://www.tensorflow.org/tfmodels/vision/semantic_segmentation)
+* [Instance Segmentation](https://www.tensorflow.org/tfmodels/vision/instance_segmentation)
 
-Note that **tf-models-official** may not include the latest changes in this
-github repo. To include latest changes, you may install **tf-models-nightly**,
-which is the nightly Model Garden package created daily automatically.
-
-```shell
-pip install tf-models-nightly
-```
-
-#### Method 2: Clone the source
-
-1. Clone the GitHub repository:
-
-```shell
-git clone https://github.com/tensorflow/models.git
-```
-
-2. Add the top-level ***/models*** folder to the Python path.
-
-```shell
-export PYTHONPATH=$PYTHONPATH:/path/to/models
-```
-
-If you are using a Colab notebook, please set the Python path with os.environ.
-
-```python
-import os
-os.environ['PYTHONPATH'] += ":/path/to/models"
-```
-
-3. Install other dependencies
-
-```shell
-pip3 install --user -r official/requirements.txt
-```
-
-Finally, if you are using nlp packages, please also install
-**tensorflow-text-nightly**:
-
-```shell
-pip3 install tensorflow-text-nightly
-```
 
 ## Contributions
 
 If you want to contribute, please review the [contribution guidelines](https://github.com/tensorflow/models/wiki/How-to-contribute).
-
-## Citing TF Official Model Garden
-
-To cite this repository:
-
-```
-@software{tfmodels2020github,
-  author = {Chen Chen and Xianzhi Du and Le Hou and Jaeyoun Kim and Jing Li and
-  Yeqing Li and Abdullah Rashwan and Fan Yang and Hongkun Yu},
-  title = {TensorFlow Official Model Garden},
-  url = {https://github.com/tensorflow/models/tree/master/official},
-  year = {2020},
-}
-```

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,15 +15,15 @@
 """ALBERT (https://arxiv.org/abs/1810.04805) text encoder network."""
 # pylint: disable=g-classes-have-attributes
 import collections
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.modeling import activations
-from official.nlp import keras_nlp
+from official.modeling import tf_utils
 from official.nlp.modeling import layers
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class AlbertEncoder(tf.keras.Model):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class AlbertEncoder(tf_keras.Model):
   """ALBERT (https://arxiv.org/abs/1810.04805) text encoder network.
 
   This network implements the encoder described in the paper "ALBERT: A Lite
@@ -75,17 +75,17 @@ class AlbertEncoder(tf.keras.Model):
                activation=activations.gelu,
                dropout_rate=0.1,
                attention_dropout_rate=0.1,
-               initializer=tf.keras.initializers.TruncatedNormal(stddev=0.02),
+               initializer=tf_keras.initializers.TruncatedNormal(stddev=0.02),
                dict_outputs=False,
                **kwargs):
-    activation = tf.keras.activations.get(activation)
-    initializer = tf.keras.initializers.get(initializer)
+    activation = tf_keras.activations.get(activation)
+    initializer = tf_keras.initializers.get(initializer)
 
-    word_ids = tf.keras.layers.Input(
+    word_ids = tf_keras.layers.Input(
         shape=(None,), dtype=tf.int32, name='input_word_ids')
-    mask = tf.keras.layers.Input(
+    mask = tf_keras.layers.Input(
         shape=(None,), dtype=tf.int32, name='input_mask')
-    type_ids = tf.keras.layers.Input(
+    type_ids = tf_keras.layers.Input(
         shape=(None,), dtype=tf.int32, name='input_type_ids')
 
     if embedding_width is None:
@@ -93,13 +93,13 @@ class AlbertEncoder(tf.keras.Model):
     embedding_layer = layers.OnDeviceEmbedding(
         vocab_size=vocab_size,
         embedding_width=embedding_width,
-        initializer=initializer,
+        initializer=tf_utils.clone_initializer(initializer),
         name='word_embeddings')
     word_embeddings = embedding_layer(word_ids)
 
     # Always uses dynamic slicing for simplicity.
-    position_embedding_layer = keras_nlp.layers.PositionEmbedding(
-        initializer=initializer,
+    position_embedding_layer = layers.PositionEmbedding(
+        initializer=tf_utils.clone_initializer(initializer),
         max_length=max_sequence_length,
         name='position_embedding')
     position_embeddings = position_embedding_layer(word_embeddings)
@@ -108,39 +108,39 @@ class AlbertEncoder(tf.keras.Model):
         layers.OnDeviceEmbedding(
             vocab_size=type_vocab_size,
             embedding_width=embedding_width,
-            initializer=initializer,
+            initializer=tf_utils.clone_initializer(initializer),
             use_one_hot=True,
             name='type_embeddings')(type_ids))
 
-    embeddings = tf.keras.layers.Add()(
+    embeddings = tf_keras.layers.Add()(
         [word_embeddings, position_embeddings, type_embeddings])
     embeddings = (
-        tf.keras.layers.LayerNormalization(
+        tf_keras.layers.LayerNormalization(
             name='embeddings/layer_norm',
             axis=-1,
             epsilon=1e-12,
             dtype=tf.float32)(embeddings))
-    embeddings = (tf.keras.layers.Dropout(rate=dropout_rate)(embeddings))
+    embeddings = (tf_keras.layers.Dropout(rate=dropout_rate)(embeddings))
     # We project the 'embedding' output to 'hidden_size' if it is not already
     # 'hidden_size'.
     if embedding_width != hidden_size:
-      embeddings = tf.keras.layers.experimental.EinsumDense(
+      embeddings = tf_keras.layers.EinsumDense(
           '...x,xy->...y',
           output_shape=hidden_size,
           bias_axes='y',
-          kernel_initializer=initializer,
+          kernel_initializer=tf_utils.clone_initializer(initializer),
           name='embedding_projection')(
               embeddings)
 
     data = embeddings
-    attention_mask = keras_nlp.layers.SelfAttentionMask()(data, mask)
-    shared_layer = keras_nlp.layers.TransformerEncoderBlock(
+    attention_mask = layers.SelfAttentionMask()(data, mask)
+    shared_layer = layers.TransformerEncoderBlock(
         num_attention_heads=num_attention_heads,
         inner_dim=intermediate_size,
         inner_activation=activation,
         output_dropout=dropout_rate,
         attention_dropout=attention_dropout_rate,
-        kernel_initializer=initializer,
+        kernel_initializer=tf_utils.clone_initializer(initializer),
         name='transformer')
     encoder_outputs = []
     for _ in range(num_layers):
@@ -151,10 +151,10 @@ class AlbertEncoder(tf.keras.Model):
     # like this will create a SliceOpLambda layer. This is better than a Lambda
     # layer with Python code, because that is fundamentally less portable.
     first_token_tensor = data[:, 0, :]
-    cls_output = tf.keras.layers.Dense(
+    cls_output = tf_keras.layers.Dense(
         units=hidden_size,
         activation='tanh',
-        kernel_initializer=initializer,
+        kernel_initializer=tf_utils.clone_initializer(initializer),
         name='pooler_transform')(
             first_token_tensor)
     if dict_outputs:
@@ -173,7 +173,7 @@ class AlbertEncoder(tf.keras.Model):
     # created using the Functional API. Once super().__init__ is called, we
     # can assign attributes to `self` - note that all `self` assignments are
     # below this line.
-    super(AlbertEncoder, self).__init__(
+    super().__init__(
         inputs=[word_ids, mask, type_ids], outputs=outputs, **kwargs)
     config_dict = {
         'vocab_size': vocab_size,
@@ -184,10 +184,10 @@ class AlbertEncoder(tf.keras.Model):
         'max_sequence_length': max_sequence_length,
         'type_vocab_size': type_vocab_size,
         'intermediate_size': intermediate_size,
-        'activation': tf.keras.activations.serialize(activation),
+        'activation': tf_keras.activations.serialize(activation),
         'dropout_rate': dropout_rate,
         'attention_dropout_rate': attention_dropout_rate,
-        'initializer': tf.keras.initializers.serialize(initializer),
+        'initializer': tf_keras.initializers.serialize(initializer),
     }
 
     # We are storing the config dict as a namedtuple here to ensure checkpoint
@@ -195,7 +195,7 @@ class AlbertEncoder(tf.keras.Model):
     # the config dict attribute. TF does not track immutable attrs which
     # do not contain Trackables, so by creating a config namedtuple instead of
     # a dict we avoid tracking it.
-    config_cls = collections.namedtuple('Config', config_dict.keys())
+    config_cls = collections.namedtuple('Config', config_dict.keys())  # pyrefly: ignore[bad-class-definition]
     self._config = config_cls(**config_dict)
     self._embedding_layer = embedding_layer
     self._position_embedding_layer = position_embedding_layer
@@ -207,5 +207,5 @@ class AlbertEncoder(tf.keras.Model):
     return dict(self._config._asdict())
 
   @classmethod
-  def from_config(cls, config):
+  def from_config(cls, config):  # pyrefly: ignore[bad-override]
     return cls(**config)

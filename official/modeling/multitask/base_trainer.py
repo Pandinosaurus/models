@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,30 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Lint as: python3
-# Copyright 2020 The TensorFlow Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
 """Multitask base trainer implementation.
 
 The trainer derives from the Orbit `StandardTrainer` class.
 """
 from typing import Union
+
 import gin
 import orbit
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
+from official.modeling import optimization
 from official.modeling.multitask import base_model
 from official.modeling.multitask import multitask
 
@@ -46,10 +33,11 @@ class MultiTaskBaseTrainer(orbit.StandardTrainer):
 
   def __init__(self,
                multi_task: multitask.MultiTask,
-               multi_task_model: Union[tf.keras.Model,
+               multi_task_model: Union[tf_keras.Model,
                                        base_model.MultiTaskBaseModel],
                optimizer: tf.optimizers.Optimizer,
-               trainer_options=None):
+               trainer_options=None,
+               train_datasets=None):
     self._strategy = tf.distribute.get_strategy()
     self._multi_task = multi_task
     self._multi_task_model = multi_task_model
@@ -58,6 +46,11 @@ class MultiTaskBaseTrainer(orbit.StandardTrainer):
     self._training_losses = None
     self._training_metrics = None
     self._global_step = orbit.utils.create_global_step()
+
+    # Creates a shadow copy of the weights to store weights moving average.
+    if isinstance(self._optimizer, optimization.ExponentialMovingAverage
+                 ) and not self._optimizer.has_shadow_copy:
+      self._optimizer.shadow_copy(multi_task_model)
 
     if hasattr(self.multi_task_model, "checkpoint_items"):
       checkpoint_items = self.multi_task_model.checkpoint_items
@@ -70,10 +63,11 @@ class MultiTaskBaseTrainer(orbit.StandardTrainer):
         global_step=self.global_step,
         **checkpoint_items)
 
-    train_datasets = {}
-    for name, task in self.multi_task.tasks.items():
-      train_datasets[name] = orbit.utils.make_distributed_dataset(
-          self.strategy, task.build_inputs, task.task_config.train_data)
+    if train_datasets is None:
+      train_datasets = {}
+      for name, task in self.multi_task.tasks.items():
+        train_datasets[name] = orbit.utils.make_distributed_dataset(
+            self.strategy, task.build_inputs, task.task_config.train_data)
 
     super().__init__(
         train_dataset=train_datasets,
@@ -119,9 +113,9 @@ class MultiTaskBaseTrainer(orbit.StandardTrainer):
       # Builds the per-task metrics and losses.
       # This the total summed training loss of tasks in the joint training.
       self._training_losses = dict(
-          total_loss=tf.keras.metrics.Mean("training_loss", dtype=tf.float32))
+          total_loss=tf_keras.metrics.Mean("training_loss", dtype=tf.float32))
       for name in self.multi_task.tasks:
-        self._training_losses[name] = tf.keras.metrics.Mean(
+        self._training_losses[name] = tf_keras.metrics.Mean(
             "training_loss", dtype=tf.float32)
     return self._training_losses
 
@@ -170,7 +164,7 @@ class MultiTaskBaseTrainer(orbit.StandardTrainer):
           task_metrics=self.training_metrics)
       for key, loss in losses.items():
         self.training_losses[key].update_state(loss)
+      self.global_step.assign_add(1)
 
     self.strategy.run(
         step_fn, args=(tf.nest.map_structure(next, iterator_map),))
-    self.global_step.assign_add(1)

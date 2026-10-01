@@ -1,4 +1,4 @@
-# Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ==============================================================================
+
 """Sets up TensorFlow Official Models."""
 import datetime
 import os
@@ -20,7 +20,8 @@ import sys
 from setuptools import find_packages
 from setuptools import setup
 
-version = '2.4.0'
+version = '2.20.0'
+tf_version = '2.20.0'  # Major version.
 
 project_name = 'tf-models-official'
 
@@ -37,12 +38,16 @@ if '--project_name' in sys.argv:
   sys.argv.pop(project_name_idx)
 
 
-def _get_requirements():
+def _get_requirements(is_nightly=False):
   """Parses requirements.txt file."""
   install_requires_tmp = []
   dependency_links_tmp = []
+  if is_nightly:
+    file_name = '../nightly_requirements.txt'
+  else:
+    file_name = '../requirements.txt'
   with open(
-      os.path.join(os.path.dirname(__file__), '../requirements.txt'), 'r') as f:
+      os.path.join(os.path.dirname(__file__), file_name), 'r') as f:
     for line in f:
       package_name = line.strip()
       # Skip empty line or comments starting with "#".
@@ -54,15 +59,18 @@ def _get_requirements():
         install_requires_tmp.append(package_name)
   return install_requires_tmp, dependency_links_tmp
 
-install_requires, dependency_links = _get_requirements()
-
 if project_name == 'tf-models-nightly':
+  install_requires, dependency_links = _get_requirements(is_nightly=True)
+  version_split = version.split('.')
+  version_split[1] = str(int(version_split[1]) + 1)
+  version = '.'.join(version_split)
   version += '.dev' + datetime.datetime.now().strftime('%Y%m%d')
   install_requires.append('tf-nightly')
   install_requires.append('tensorflow-text-nightly')
 else:
-  install_requires.append('tensorflow>=2.4.0')
-  install_requires.append('tensorflow-text>=2.4.0')
+  install_requires, dependency_links = _get_requirements()
+  install_requires.append(f'tensorflow~={tf_version}')
+  install_requires.append(f'tensorflow-text~={tf_version}')
 
 print('install_requires: ', install_requires)
 print('dependency_links: ', dependency_links)
@@ -73,7 +81,7 @@ setup(
     description='TensorFlow Official Models',
     long_description=long_description,
     author='Google Inc.',
-    author_email='no-reply@google.com',
+    author_email='packages@tensorflow.org',
     url='https://github.com/tensorflow/models',
     license='Apache 2.0',
     packages=find_packages(exclude=[
@@ -81,11 +89,12 @@ setup(
         'official.pip_package*',
         'official.benchmark*',
         'official.colab*',
+        'official.recommendation.ranking.data.preprocessing*',
     ]),
     exclude_package_data={
         '': ['*_test.py',],
     },
     install_requires=install_requires,
     dependency_links=dependency_links,
-    python_requires='>=3.6',
+    python_requires='>=3.7',
 )

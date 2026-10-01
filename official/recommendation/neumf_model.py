@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,13 +31,13 @@ the two models by concatenating their last hidden layer.
 """
 from __future__ import absolute_import
 from __future__ import division
-# from __future__ import google_type_annotations
 from __future__ import print_function
 
 import sys
 
-from six.moves import xrange  # pylint: disable=redefined-builtin
-import tensorflow as tf
+from six.moves import xrange  # pylint: disable=redefined-builtin  # pyrefly: ignore[missing-source-for-stubs]
+import tensorflow as tf, tf_keras
+from tensorflow import estimator as tf_estimator
 from typing import Any, Dict, Text
 
 from official.recommendation import constants as rconst
@@ -79,14 +79,14 @@ def neumf_model_fn(features, labels, mode, params):
   users = features[movielens.USER_COLUMN]
   items = features[movielens.ITEM_COLUMN]
 
-  user_input = tf.keras.layers.Input(tensor=users)
-  item_input = tf.keras.layers.Input(tensor=items)
+  user_input = tf_keras.layers.Input(tensor=users)
+  item_input = tf_keras.layers.Input(tensor=items)
   logits = construct_model(user_input, item_input, params).output
 
   # Softmax with the first column of zeros is equivalent to sigmoid.
   softmax_logits = ncf_common.convert_to_softmax_logits(logits)
 
-  if mode == tf.estimator.ModeKeys.EVAL:
+  if mode == tf_estimator.ModeKeys.EVAL:
     duplicate_mask = tf.cast(features[rconst.DUPLICATE_MASK], tf.float32)
     return _get_estimator_spec_with_metrics(
         logits,
@@ -96,7 +96,7 @@ def neumf_model_fn(features, labels, mode, params):
         params["match_mlperf"],
         use_tpu_spec=params["use_tpu"])
 
-  elif mode == tf.estimator.ModeKeys.TRAIN:
+  elif mode == tf_estimator.ModeKeys.TRAIN:
     labels = tf.cast(labels, tf.int32)
     valid_pt_mask = features[rconst.VALID_POINT_MASK]
 
@@ -125,7 +125,7 @@ def neumf_model_fn(features, labels, mode, params):
     update_ops = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.UPDATE_OPS)
     train_op = tf.group(minimize_op, update_ops)
 
-    return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
+    return tf_estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
   else:
     raise NotImplementedError
@@ -136,7 +136,7 @@ def _strip_first_and_last_dimension(x, batch_size):
 
 
 def construct_model(user_input: tf.Tensor, item_input: tf.Tensor,
-                    params: Dict[Text, Any]) -> tf.keras.Model:
+                    params: Dict[Text, Any]) -> tf_keras.Model:
   """Initialize NeuMF model.
 
   Args:
@@ -175,59 +175,59 @@ def construct_model(user_input: tf.Tensor, item_input: tf.Tensor,
 
   # It turns out to be significantly more effecient to store the MF and MLP
   # embedding portions in the same table, and then slice as needed.
-  embedding_user = tf.keras.layers.Embedding(
+  embedding_user = tf_keras.layers.Embedding(
       num_users,
       mf_dim + model_layers[0] // 2,
       embeddings_initializer=embedding_initializer,
-      embeddings_regularizer=tf.keras.regularizers.l2(mf_regularization),
+      embeddings_regularizer=tf_keras.regularizers.l2(mf_regularization),
       input_length=1,
       name="embedding_user")(
           user_input)
 
-  embedding_item = tf.keras.layers.Embedding(
+  embedding_item = tf_keras.layers.Embedding(
       num_items,
       mf_dim + model_layers[0] // 2,
       embeddings_initializer=embedding_initializer,
-      embeddings_regularizer=tf.keras.regularizers.l2(mf_regularization),
+      embeddings_regularizer=tf_keras.regularizers.l2(mf_regularization),
       input_length=1,
       name="embedding_item")(
           item_input)
 
   # GMF part
-  mf_user_latent = tf.keras.layers.Lambda(
+  mf_user_latent = tf_keras.layers.Lambda(
       mf_slice_fn, name="embedding_user_mf")(
           embedding_user)
-  mf_item_latent = tf.keras.layers.Lambda(
+  mf_item_latent = tf_keras.layers.Lambda(
       mf_slice_fn, name="embedding_item_mf")(
           embedding_item)
 
   # MLP part
-  mlp_user_latent = tf.keras.layers.Lambda(
+  mlp_user_latent = tf_keras.layers.Lambda(
       mlp_slice_fn, name="embedding_user_mlp")(
           embedding_user)
-  mlp_item_latent = tf.keras.layers.Lambda(
+  mlp_item_latent = tf_keras.layers.Lambda(
       mlp_slice_fn, name="embedding_item_mlp")(
           embedding_item)
 
   # Element-wise multiply
-  mf_vector = tf.keras.layers.multiply([mf_user_latent, mf_item_latent])
+  mf_vector = tf_keras.layers.multiply([mf_user_latent, mf_item_latent])
 
   # Concatenation of two latent features
-  mlp_vector = tf.keras.layers.concatenate([mlp_user_latent, mlp_item_latent])
+  mlp_vector = tf_keras.layers.concatenate([mlp_user_latent, mlp_item_latent])
 
   num_layer = len(model_layers)  # Number of layers in the MLP
   for layer in xrange(1, num_layer):
-    model_layer = tf.keras.layers.Dense(
+    model_layer = tf_keras.layers.Dense(
         model_layers[layer],
-        kernel_regularizer=tf.keras.regularizers.l2(mlp_reg_layers[layer]),
+        kernel_regularizer=tf_keras.regularizers.l2(mlp_reg_layers[layer]),
         activation="relu")
     mlp_vector = model_layer(mlp_vector)
 
   # Concatenate GMF and MLP parts
-  predict_vector = tf.keras.layers.concatenate([mf_vector, mlp_vector])
+  predict_vector = tf_keras.layers.concatenate([mf_vector, mlp_vector])
 
   # Final prediction layer
-  logits = tf.keras.layers.Dense(
+  logits = tf_keras.layers.Dense(
       1,
       activation=None,
       kernel_initializer="lecun_uniform",
@@ -235,11 +235,11 @@ def construct_model(user_input: tf.Tensor, item_input: tf.Tensor,
           predict_vector)
 
   # Print model topology.
-  model = tf.keras.models.Model([user_input, item_input], logits)
+  model = tf_keras.models.Model([user_input, item_input], logits)
   model.summary()
   sys.stdout.flush()
 
-  return model
+  return model  # pyrefly: ignore[bad-return]
 
 
 def _get_estimator_spec_with_metrics(logits: tf.Tensor,
@@ -261,13 +261,13 @@ def _get_estimator_spec_with_metrics(logits: tf.Tensor,
       match_mlperf)
 
   if use_tpu_spec:
-    return tf.estimator.tpu.TPUEstimatorSpec(
-        mode=tf.estimator.ModeKeys.EVAL,
+    return tf_estimator.tpu.TPUEstimatorSpec(
+        mode=tf_estimator.ModeKeys.EVAL,
         loss=cross_entropy,
         eval_metrics=(metric_fn, [in_top_k, ndcg, metric_weights]))
 
-  return tf.estimator.EstimatorSpec(
-      mode=tf.estimator.ModeKeys.EVAL,
+  return tf_estimator.EstimatorSpec(
+      mode=tf_estimator.ModeKeys.EVAL,
       loss=cross_entropy,
       eval_metric_ops=metric_fn(in_top_k, ndcg, metric_weights))
 

@@ -39,7 +39,7 @@ class CreateKittiTFRecordTest(tf.test.TestCase):
 
   def test_dict_to_tf_example(self):
     image_file_name = 'tmp_image.jpg'
-    image_data = np.random.rand(256, 256, 3)
+    image_data = np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8)
     save_path = os.path.join(self.get_temp_dir(), image_file_name)
     image = PIL.Image.fromarray(image_data, 'RGB')
     image.save(save_path)

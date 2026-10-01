@@ -25,29 +25,34 @@ limitations under the License.
 #include "tf_ops/projection_util.h"  // seq_flow_lite
 #include "tflite_ops/tf_tflite_diff_test_util.h"  // seq_flow_lite
 
-namespace tflite {
+namespace seq_flow_lite {
 
 namespace ops {
 namespace custom {
 
 namespace {
 
+using ::seq_flow_lite::testing::AttrValue;
+using ::seq_flow_lite::testing::FloatTensor;
+using ::seq_flow_lite::testing::IntTensor;
+using ::seq_flow_lite::testing::OpEquivTestCase;
+using ::seq_flow_lite::testing::StringTensor;
+using ::seq_flow_lite::testing::TensorflowTfLiteOpTest;
 using ::testing::ElementsAreArray;
-using ::tflite::testing::AttrValue;
-using ::tflite::testing::FloatTensor;
-using ::tflite::testing::IntTensor;
-using ::tflite::testing::OpEquivTestCase;
-using ::tflite::testing::StringTensor;
-using ::tflite::testing::TensorflowTfLiteOpTest;
+using ::testing::Not;
+using ::tflite::TensorType_FLOAT32;
+using ::tflite::TensorType_STRING;
+using ::tflite::TensorType_UINT8;
 
-class SequenceStringProjectionModel : public SingleOpModel {
+class SequenceStringProjectionModel : public ::tflite::SingleOpModel {
  public:
   explicit SequenceStringProjectionModel(
       bool split_on_space, int max_splits, int word_novelty_bits,
-      int doc_size_levels, bool add_eos_tag, TensorType output_type,
+      int doc_size_levels, bool add_eos_tag, ::tflite::TensorType output_type,
       const std::string& token_separators = "",
       bool normalize_repetition = false, float add_first_cap = 0.0,
-      float add_all_caps = 0.0, const string& hashtype = kMurmurHash) {
+      float add_all_caps = 0.0, const std::string& hashtype = kMurmurHash,
+      bool normalize_spaces = false) {
     flexbuffers::Builder fbb;
     fbb.Map([&] {
       fbb.Int("feature_size", 4);
@@ -62,6 +67,7 @@ class SequenceStringProjectionModel : public SingleOpModel {
       fbb.Bool("normalize_repetition", normalize_repetition);
       fbb.Float("add_first_cap_feature", add_first_cap);
       fbb.Float("add_all_caps_feature", add_all_caps);
+      fbb.Bool("normalize_spaces", normalize_spaces);
     });
     fbb.Finish();
     output_ = AddOutput({output_type, {}});
@@ -73,13 +79,13 @@ class SequenceStringProjectionModel : public SingleOpModel {
     PopulateStringTensor(input_, {input});
     CHECK(interpreter_->AllocateTensors() == kTfLiteOk)
         << "Cannot allocate tensors";
-    SingleOpModel::Invoke();
+    CHECK_EQ(SingleOpModel::Invoke(), kTfLiteOk);
   }
   TfLiteStatus InvokeFailable(const std::string& input) {
     PopulateStringTensor(input_, {input});
     CHECK(interpreter_->AllocateTensors() == kTfLiteOk)
         << "Cannot allocate tensors";
-    return SingleOpModel::InvokeUnchecked();
+    return SingleOpModel::Invoke();
   }
 
   template <typename T>
@@ -330,6 +336,32 @@ TEST(SequenceStringProjectionTest, NormalizeRepetition) {
   auto output2 = m2.GetOutput<uint8_t>();
 
   EXPECT_THAT(output1, ElementsAreArray(output2));
+}
+
+TEST(SequenceStringProjectionTest, NormalizeSpaces) {
+  SequenceStringProjectionModel model_nonormalize(false, -1, 0, 0, false,
+                                                  TensorType_UINT8, "", false,
+                                                  0.0, 0.0, kMurmurHash, false);
+  SequenceStringProjectionModel model_normalize(false, -1, 0, 0, false,
+                                                TensorType_UINT8, "", false,
+                                                0.0, 0.0, kMurmurHash, true);
+
+  const char kNoExtraSpaces[] = "Hello there.";
+  const char kExtraSpaces[] = " Hello   there.  ";
+
+  model_nonormalize.Invoke(kNoExtraSpaces);
+  auto output_noextra_nonorm = model_nonormalize.GetOutput<uint8_t>();
+  model_nonormalize.Invoke(kExtraSpaces);
+  auto output_extra_nonorm = model_nonormalize.GetOutput<uint8_t>();
+  model_normalize.Invoke(kNoExtraSpaces);
+  auto output_noextra_norm = model_normalize.GetOutput<uint8_t>();
+  model_normalize.Invoke(kExtraSpaces);
+  auto output_extra_norm = model_normalize.GetOutput<uint8_t>();
+
+  EXPECT_THAT(output_noextra_nonorm, ElementsAreArray(output_noextra_norm));
+  EXPECT_THAT(output_noextra_nonorm, ElementsAreArray(output_extra_norm));
+  EXPECT_THAT(output_noextra_nonorm,
+              Not(ElementsAreArray(output_extra_nonorm)));
 }
 
 class SequenceStringProjectionTest : public TensorflowTfLiteOpTest {
@@ -707,6 +739,7 @@ std::vector<OpEquivTestCase> SequenceStringProjectionTestCases() {
     test_case.output_tensors.emplace_back(FloatTensor({}, {}), kScale, kZero);
     test_cases.push_back(test_case);
   }
+
   {
     OpEquivTestCase test_case;
     test_case.test_name = "NormalizeRepetition";
@@ -791,6 +824,20 @@ std::vector<OpEquivTestCase> SequenceStringProjectionTestCases() {
     test_cases.push_back(test_case);
   }
 
+  {
+    OpEquivTestCase test_case;
+    test_case.test_name = "NormalizeSpaces";
+    test_case.attributes["vocabulary"] = AttrValue("");
+    test_case.attributes["split_on_space"] = AttrValue(true);
+    test_case.attributes["feature_size"] = AttrValue(8);
+    test_case.attributes["add_eos_tag"] = AttrValue(false);
+    test_case.attributes["add_bos_tag"] = AttrValue(false);
+    test_case.attributes["normalize_spaces"] = AttrValue(true);
+    test_case.input_tensors.push_back(StringTensor({1}, {" Hello   there.  "}));
+    test_case.output_tensors.emplace_back(FloatTensor({}, {}), kScale, kZero);
+    test_cases.push_back(test_case);
+  }
+
   return test_cases;
 }
 
@@ -798,11 +845,11 @@ INSTANTIATE_TEST_SUITE_P(
     SequenceStringProjectionTests, SequenceStringProjectionTest,
     ::testing::ValuesIn(SequenceStringProjectionTestCases()));
 
-class SequenceStringProjectionV2Model : public SingleOpModel {
+class SequenceStringProjectionV2Model : public ::tflite::SingleOpModel {
  public:
   explicit SequenceStringProjectionV2Model(
       std::vector<std::vector<int>> input_shapes,
-      const string& hashtype = kMurmurHash) {
+      const std::string& hashtype = kMurmurHash) {
     flexbuffers::Builder fbb;
     fbb.Map([&] {
       fbb.Int("feature_size", 4);
@@ -819,14 +866,15 @@ class SequenceStringProjectionV2Model : public SingleOpModel {
     PopulateStringTensor(input_, input);
     CHECK(interpreter_->AllocateTensors() == kTfLiteOk)
         << "Cannot allocate tensors";
-    ASSERT_EQ(SingleOpModel::InvokeUnchecked(), expected);
+    ASSERT_EQ(SingleOpModel::Invoke(), expected);
   }
   TfLiteStatus InvokeFailable(const std::string& input) {
     PopulateStringTensor(input_, {input});
     CHECK(interpreter_->AllocateTensors() == kTfLiteOk)
         << "Cannot allocate tensors";
-    return SingleOpModel::InvokeUnchecked();
+    return SingleOpModel::Invoke();
   }
+  std::vector<int> GetOutputShape() { return GetTensorShape(output_); }
 
  private:
   int input_;
@@ -882,6 +930,15 @@ TEST(SequenceStringProjectionV2Test, RegularInputUint8) {
   // OK
   SequenceStringProjectionV2Model m({{1, 2}});
   m.Invoke({"hello", "world"}, kTfLiteOk);
+}
+
+TEST(SequenceStringProjectionV2Test, NumberProjectionsForMultipleInputs) {
+  SequenceStringProjectionV2Model m({{1, 2}});
+  std::vector<std::string> input = {"hello", "world"};
+  m.Invoke(input, kTfLiteOk);
+  EXPECT_EQ(m.GetOutputShape()[1], input.size());
+  m.Invoke(input, kTfLiteOk);
+  EXPECT_EQ(m.GetOutputShape()[1], input.size());
 }
 
 class SequenceStringProjectionV2Test : public TensorflowTfLiteOpTest {
@@ -986,7 +1043,7 @@ INSTANTIATE_TEST_SUITE_P(
 }  // namespace
 }  // namespace custom
 }  // namespace ops
-}  // namespace tflite
+}  // namespace seq_flow_lite
 
 int main(int argc, char** argv) {
   // On Linux, add: absl::SetFlag(&FLAGS_logtostderr, true);

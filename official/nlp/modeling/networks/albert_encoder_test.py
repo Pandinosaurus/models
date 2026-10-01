@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,26 +14,18 @@
 
 """Tests for ALBERT transformer-based text encoder network."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from absl.testing import parameterized
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
-from tensorflow.python.keras import keras_parameterized  # pylint: disable=g-direct-tensorflow-import
 from official.nlp.modeling.networks import albert_encoder
 
 
-# This decorator runs the test in V1, V2-Eager, and V2-Functional mode. It
-# guarantees forward compatibility of this code for the V2 switchover.
-@keras_parameterized.run_all_keras_modes
-class AlbertEncoderTest(keras_parameterized.TestCase):
+class AlbertEncoderTest(tf.test.TestCase, parameterized.TestCase):
 
   def tearDown(self):
     super(AlbertEncoderTest, self).tearDown()
-    tf.keras.mixed_precision.set_global_policy("float32")
+    tf_keras.mixed_precision.set_global_policy("float32")
 
   @parameterized.named_parameters(
       dict(testcase_name="default", expected_dtype=tf.float32),
@@ -49,15 +41,15 @@ class AlbertEncoderTest(keras_parameterized.TestCase):
         num_attention_heads=2,
         num_layers=3)
     if expected_dtype == tf.float16:
-      tf.keras.mixed_precision.set_global_policy("mixed_float16")
+      tf_keras.mixed_precision.set_global_policy("mixed_float16")
 
     # Create a small TransformerEncoder for testing.
     test_network = albert_encoder.AlbertEncoder(**kwargs)
 
     # Create the inputs (note that the first dimension is implicit).
-    word_ids = tf.keras.Input(shape=(sequence_length,), dtype=tf.int32)
-    mask = tf.keras.Input(shape=(sequence_length,), dtype=tf.int32)
-    type_ids = tf.keras.Input(shape=(sequence_length,), dtype=tf.int32)
+    word_ids = tf_keras.Input(shape=(sequence_length,), dtype=tf.int32)
+    mask = tf_keras.Input(shape=(sequence_length,), dtype=tf.int32)
+    type_ids = tf_keras.Input(shape=(sequence_length,), dtype=tf.int32)
     data, pooled = test_network([word_ids, mask, type_ids])
 
     expected_data_shape = [None, sequence_length, hidden_size]
@@ -94,13 +86,13 @@ class AlbertEncoderTest(keras_parameterized.TestCase):
         num_layers=num_layers,
         type_vocab_size=num_types)
     # Create the inputs (note that the first dimension is implicit).
-    word_ids = tf.keras.Input(shape=(sequence_length,), dtype=tf.int32)
-    mask = tf.keras.Input(shape=(sequence_length,), dtype=tf.int32)
-    type_ids = tf.keras.Input(shape=(sequence_length,), dtype=tf.int32)
+    word_ids = tf_keras.Input(shape=(sequence_length,), dtype=tf.int32)
+    mask = tf_keras.Input(shape=(sequence_length,), dtype=tf.int32)
+    type_ids = tf_keras.Input(shape=(sequence_length,), dtype=tf.int32)
     data, pooled = test_network([word_ids, mask, type_ids])
 
     # Create a model based off of this network:
-    model = tf.keras.Model([word_ids, mask, type_ids], [data, pooled])
+    model = tf_keras.Model([word_ids, mask, type_ids], [data, pooled])
 
     # Invoke the model. We can't validate the output data here (the model is too
     # complex) but this will catch structural runtime errors.
@@ -122,7 +114,7 @@ class AlbertEncoderTest(keras_parameterized.TestCase):
         num_attention_heads=2,
         num_layers=num_layers,
         type_vocab_size=num_types)
-    model = tf.keras.Model([word_ids, mask, type_ids], [data, pooled])
+    model = tf_keras.Model([word_ids, mask, type_ids], [data, pooled])
     _ = model.predict([word_id_data, mask_data, type_id_data])
 
     # Tests dictionary outputs.
@@ -148,7 +140,7 @@ class AlbertEncoderTest(keras_parameterized.TestCase):
     self.assertLen(dict_outputs["pooled_output"], num_layers)
 
   def test_serialize_deserialize(self):
-    tf.keras.mixed_precision.set_global_policy("mixed_float16")
+    tf_keras.mixed_precision.set_global_policy("mixed_float16")
     # Create a network object that sets all of its config options.
     kwargs = dict(
         vocab_size=100,
@@ -166,10 +158,10 @@ class AlbertEncoderTest(keras_parameterized.TestCase):
     network = albert_encoder.AlbertEncoder(**kwargs)
 
     expected_config = dict(kwargs)
-    expected_config["activation"] = tf.keras.activations.serialize(
-        tf.keras.activations.get(expected_config["activation"]))
-    expected_config["initializer"] = tf.keras.initializers.serialize(
-        tf.keras.initializers.get(expected_config["initializer"]))
+    expected_config["activation"] = tf_keras.activations.serialize(
+        tf_keras.activations.get(expected_config["activation"]))
+    expected_config["initializer"] = tf_keras.initializers.serialize(
+        tf_keras.initializers.get(expected_config["initializer"]))
     self.assertEqual(network.get_config(), expected_config)
 
     # Create another network object from the first object's config.

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,22 +15,23 @@
 """Mock task for testing."""
 
 import dataclasses
+
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.core import base_task
 from official.core import config_definitions as cfg
 from official.core import exp_factory
-from official.core import task_factory
+from official.modeling.hyperparams import base_config
 
 
-class MockModel(tf.keras.Model):
+class MockModel(tf_keras.Model):
 
   def __init__(self, network):
     super().__init__()
     self.network = network
 
-  def call(self, inputs):
+  def call(self, inputs):  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
     outputs = self.network(inputs)
     self.add_loss(tf.reduce_mean(outputs))
     return outputs
@@ -41,7 +42,7 @@ class MockTaskConfig(cfg.TaskConfig):
   pass
 
 
-@task_factory.register_task_cls(MockTaskConfig)
+@base_config.bind(MockTaskConfig)
 class MockTask(base_task.Task):
   """Mock task object for testing."""
 
@@ -49,20 +50,20 @@ class MockTask(base_task.Task):
     super().__init__(params=params, logging_dir=logging_dir, name=name)
 
   def build_model(self, *arg, **kwargs):
-    inputs = tf.keras.layers.Input(shape=(2,), name="random", dtype=tf.float32)
-    outputs = tf.keras.layers.Dense(
-        1, bias_initializer=tf.keras.initializers.Ones(), name="dense_0")(
+    inputs = tf_keras.layers.Input(shape=(2,), name="random", dtype=tf.float32)
+    outputs = tf_keras.layers.Dense(
+        1, bias_initializer=tf_keras.initializers.Ones(), name="dense_0")(
             inputs)
-    network = tf.keras.Model(inputs=inputs, outputs=outputs)
+    network = tf_keras.Model(inputs=inputs, outputs=outputs)
     return MockModel(network)
 
   def build_metrics(self, training: bool = True):
     del training
-    return [tf.keras.metrics.Accuracy(name="acc")]
+    return [tf_keras.metrics.Accuracy(name="acc")]
 
-  def validation_step(self, inputs, model: tf.keras.Model, metrics=None):
+  def validation_step(self, inputs, model: tf_keras.Model, metrics=None):
     logs = super().validation_step(inputs, model, metrics)
-    logs["counter"] = tf.ones((1,), dtype=tf.float32)
+    logs["counter"] = tf.constant(1, dtype=tf.float32)
     return logs
 
   def build_inputs(self, params):

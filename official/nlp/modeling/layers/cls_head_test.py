@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 """Tests for cls_head."""
 from absl.testing import parameterized
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.nlp.modeling.layers import cls_head
 
@@ -39,6 +39,8 @@ class ClassificationHeadTest(tf.test.TestCase, parameterized.TestCase):
     self.assertAllClose(output, [[0., 0.], [0., 0.]])
     self.assertSameElements(test_layer.checkpoint_items.keys(),
                             ["pooler_dense"])
+    outputs = test_layer(features, only_project=True)
+    self.assertEqual(outputs.shape, (2, 5))
 
   def test_layer_serialization(self):
     layer = cls_head.ClassificationHead(10, 2)
@@ -70,6 +72,9 @@ class MultiClsHeadsTest(tf.test.TestCase, parameterized.TestCase):
     self.assertAllClose(outputs["bar"], [[0., 0., 0.], [0., 0., 0.]])
     self.assertSameElements(test_layer.checkpoint_items.keys(),
                             ["pooler_dense", "foo", "bar"])
+
+    outputs = test_layer(features, only_project=True)
+    self.assertEqual(outputs.shape, (2, 5))
 
   def test_layer_serialization(self):
     cls_list = [("foo", 2), ("bar", 3)]
@@ -193,6 +198,30 @@ class GaussianProcessClassificationHead(tf.test.TestCase,
     # The config value should equal to those defined in setUp().
     self.assertEqual(layer_config["norm_multiplier"], 1.)
     self.assertEqual(layer_config["num_inducing"], 512)
+
+
+class PerQueryDenseHeadTest(tf.test.TestCase, parameterized.TestCase):
+
+  @parameterized.named_parameters(("single_query", 1, 3, False),
+                                  ("multi_queries", 10, 2, False),
+                                  ("with_bias", 10, 2, True))
+  def test_layer_invocation(self, num_queries, features, use_bias):
+    batch_size = 5
+    hidden_size = 10
+    layer = cls_head.PerQueryDenseHead(
+        num_queries=num_queries, features=features, use_bias=use_bias)
+    inputs = tf.zeros(
+        shape=(batch_size, num_queries, hidden_size), dtype=tf.float32)
+    outputs = layer(inputs)
+    self.assertEqual(outputs.shape, [batch_size, num_queries, features])
+
+  def test_layer_serialization(self):
+    layer = cls_head.PerQueryDenseHead(
+        num_queries=10, features=2, use_bias=True)
+    new_layer = cls_head.PerQueryDenseHead.from_config(layer.get_config())
+
+    # If the serialization was successful, the new config should match the old.
+    self.assertAllEqual(layer.get_config(), new_layer.get_config())
 
 if __name__ == "__main__":
   tf.test.main()

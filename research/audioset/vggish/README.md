@@ -23,7 +23,7 @@ VGGish depends on the following Python packages:
 
 These are all easily installable via, e.g., `pip install numpy` (as in the
 sample installation session below). Any reasonably recent version of these
-packages shold work.
+packages should work.
 
 VGGish also requires downloading two data files:
 
@@ -57,7 +57,7 @@ Here's a sample installation and test session:
 $ sudo python -m pip install --upgrade pip wheel
 
 # Install all dependences.
-$ sudo pip install numpy resampy tensorflow tf_slim six soundfile
+$ sudo pip install -r requirements.txt
 
 # Clone TensorFlow models repo into a 'models' directory.
 $ git clone https://github.com/tensorflow/models.git
@@ -170,8 +170,7 @@ the postprocessor can be run after inference.
 If you don't need to use the released embeddings or YouTube-8M, then you could
 skip postprocessing and use raw embeddings.
 
-A [Colab](https://colab.research.google.com/)
-showing how to download the model and calculate the embeddings on your
+A Colab showing how to download the model and calculate the embeddings on your
 own sound data is available here:
-[AudioSet Embedding Colab](https://colab.research.google.com/drive/1TbX92UL9sYWbdwdGE0rJ9owmezB-Rl1C).
+[VGGish Embedding Colab](https://colab.research.google.com/drive/1E3CaPAqCai9P9QhJ3WYPNCVmrJU4lAhF).
 

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@
 import os
 
 from absl import logging
-from official.nlp.bert import tokenization
 from official.nlp.data import classifier_data_lib
+from official.nlp.tools import tokenization
 
 
 class BuccProcessor(classifier_data_lib.DataProcessor):
@@ -135,7 +135,7 @@ def generate_sentence_retrevial_tf_record(processor,
     for lang_b in [lang_a, "en"]:
       if eval_data_output_path:
         eval_input_data_examples = processor.get_dev_examples(
-            data_dir, os.path.join(path_pattern.format(lang_a, lang_b)))
+            data_dir, os.path.join(path_pattern.format(lang_a, lang_b)))  # pyrefly: ignore[unbound-name]
 
         num_eval_data = len(eval_input_data_examples)
         logging.info("Processing %d dev examples of %s-en.%s", num_eval_data,

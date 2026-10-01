@@ -1,4 +1,3 @@
-# Lint as: python2, python3
 # Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -467,9 +466,11 @@ def multi_resolution_feature_maps(feature_map_layout, depth_multiplier,
             stride=1,
             scope=layer_name)
         if pool_residual and pre_layer_depth == depth_fn(layer_depth):
+          if use_explicit_padding:
+            pre_layer = ops.fixed_padding(pre_layer, conv_kernel_size)
           feature_map += slim.avg_pool2d(
-              pre_layer, [3, 3],
-              padding='SAME',
+              pre_layer, [conv_kernel_size, conv_kernel_size],
+              padding=padding,
               stride=2,
               scope=layer_name + '_pool')
       else:

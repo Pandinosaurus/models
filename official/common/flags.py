@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,16 +18,35 @@ from absl import flags
 
 
 def define_flags():
-  """Defines flags."""
+  """Defines flags.
+
+  All flags are defined as optional, but in practice most models use some of
+  these flags and so mark_flags_as_required() should be called after calling
+  this function. Typically, 'experiment', 'mode', and 'model_dir' are required.
+  For example:
+
+  ```
+  from absl import flags
+  from official.common import flags as tfm_flags  # pylint: disable=line-too-long
+  ...
+  tfm_flags.define_flags()
+  flags.mark_flags_as_required(['experiment', 'mode', 'model_dir'])
+  ```
+
+  The reason all flags are optional is because unit tests often do not set or
+  use any of the flags.
+  """
   flags.DEFINE_string(
-      'experiment', default=None, help='The experiment type registered.')
+      'experiment', default=None, help=
+      'The experiment type registered, specifying an ExperimentConfig.')
 
   flags.DEFINE_enum(
       'mode',
       default=None,
       enum_values=[
           'train', 'eval', 'train_and_eval', 'continuous_eval',
-          'continuous_train_and_eval', 'train_and_validate'
+          'continuous_train_and_eval', 'train_and_validate',
+          'train_and_post_eval'
       ],
       help='Mode to run: `train`, `eval`, `train_and_eval`, '
       '`continuous_eval`, `continuous_train_and_eval` and '
@@ -90,3 +109,33 @@ def define_flags():
 
   flags.DEFINE_string(
       'tf_data_service', default=None, help='The tf.data service address')
+
+  flags.DEFINE_string(
+      'tpu_platform', default=None, help='TPU platform type.')
+
+  flags.DEFINE_string(
+      'tfhub_handle',
+      default=None,
+      help=(
+          'TFHub handle for publishing the model to TFHub. When this flag '
+          'is set your train.py should use xm_tfhub to publish to TFHub. '
+          'If using TFleX, prefer tflex_output_uri + TfHubPusher component.'
+      ),
+  )
+
+  # To use TFleX components that consume a model, set this flag by configuring
+  # a TFleX tfx.borg.types.standard_artifacts.Model output artifact.
+  # (go/tflex-xm#connect-your-component-to-other-components)
+  # Meanwhile have your train.py save a serializable model to this destination:
+  #   model.save(os.path.join(FLAGS.tflex_output_uri, 'Format-Servo'),
+  #              save_format='tf')
+  # (https://www.tensorflow.org/guide/keras/serialization_and_saving)
+  flags.DEFINE_string(
+      'tflex_output_uri',
+      default=None,
+      help=(
+          'When running in TFleX, you can configure an XManagerLauncher output'
+          ' to set this flag'
+          ' (go/tflex-xm#connect-your-component-to-other-components)'
+      ),
+  )

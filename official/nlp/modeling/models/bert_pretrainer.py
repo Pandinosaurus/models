@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,14 +20,15 @@ from typing import List, Optional
 
 from absl import logging
 import gin
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
+from official.modeling import tf_utils
 from official.nlp.modeling import layers
 from official.nlp.modeling import networks
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class BertPretrainer(tf.keras.Model):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class BertPretrainer(tf_keras.Model):
   """BERT pretraining model.
 
   [Note] Please use the new `BertPretrainerV2` for your projects.
@@ -91,7 +92,7 @@ class BertPretrainer(tf.keras.Model):
           'requested num_token_predictions %s.' %
           (sequence_output_length, num_token_predictions))
 
-    masked_lm_positions = tf.keras.layers.Input(
+    masked_lm_positions = tf_keras.layers.Input(
         shape=(num_token_predictions,),
         name='masked_lm_positions',
         dtype=tf.int32)
@@ -102,7 +103,7 @@ class BertPretrainer(tf.keras.Model):
     masked_lm = layers.MaskedLM(
         embedding_table=embedding_table,
         activation=activation,
-        initializer=initializer,
+        initializer=tf_utils.clone_initializer(initializer),
         output=output,
         name='cls/predictions')
     lm_outputs = masked_lm(
@@ -111,7 +112,7 @@ class BertPretrainer(tf.keras.Model):
     classification = networks.Classification(
         input_width=cls_output.shape[-1],
         num_classes=num_classes,
-        initializer=initializer,
+        initializer=tf_utils.clone_initializer(initializer),
         output=output,
         name='classification')
     sentence_outputs = classification(cls_output)
@@ -142,7 +143,7 @@ class BertPretrainer(tf.keras.Model):
     # the config dict attribute. TF does not track immutable attrs which
     # do not contain Trackables, so by creating a config namedtuple instead of
     # a dict we avoid tracking it.
-    config_cls = collections.namedtuple('Config', config_dict.keys())
+    config_cls = collections.namedtuple('Config', config_dict.keys())  # pyrefly: ignore[bad-class-definition]
     self._config = config_cls(**config_dict)
 
     self.encoder = network
@@ -157,9 +158,9 @@ class BertPretrainer(tf.keras.Model):
     return cls(**config)
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
+@tf_keras.utils.register_keras_serializable(package='Text')
 @gin.configurable
-class BertPretrainerV2(tf.keras.Model):
+class BertPretrainerV2(tf_keras.Model):
   """BERT pretraining model V2.
 
   Adds the masked language model head and optional classification heads upon the
@@ -188,21 +189,24 @@ class BertPretrainerV2(tf.keras.Model):
 
   def __init__(
       self,
-      encoder_network: tf.keras.Model,
+      encoder_network: tf_keras.Model,
       mlm_activation=None,
       mlm_initializer='glorot_uniform',
-      classification_heads: Optional[List[tf.keras.layers.Layer]] = None,
-      customized_masked_lm: Optional[tf.keras.layers.Layer] = None,
+      classification_heads: Optional[List[tf_keras.layers.Layer]] = None,
+      customized_masked_lm: Optional[tf_keras.layers.Layer] = None,
       name: str = 'bert',
       **kwargs):
     super().__init__(self, name=name, **kwargs)
     self._config = {
         'encoder_network': encoder_network,
         'mlm_initializer': mlm_initializer,
+        'mlm_activation': mlm_activation,
         'classification_heads': classification_heads,
         'name': name,
     }
     self.encoder_network = encoder_network
+    # Makes sure the weights are built.
+    _ = self.encoder_network(self.encoder_network.inputs)
     inputs = copy.copy(self.encoder_network.inputs)
     self.classification_heads = classification_heads or []
     if len(set([cls.name for cls in self.classification_heads])) != len(
@@ -214,12 +218,15 @@ class BertPretrainerV2(tf.keras.Model):
         activation=mlm_activation,
         initializer=mlm_initializer,
         name='cls/predictions')
-    masked_lm_positions = tf.keras.layers.Input(
+    masked_lm_positions = tf_keras.layers.Input(
         shape=(None,), name='masked_lm_positions', dtype=tf.int32)
-    inputs.append(masked_lm_positions)
+    if isinstance(inputs, dict):
+      inputs['masked_lm_positions'] = masked_lm_positions
+    else:
+      inputs.append(masked_lm_positions)
     self.inputs = inputs
 
-  def call(self, inputs):
+  def call(self, inputs):  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
     if isinstance(inputs, list):
       logging.warning('List inputs to BertPretrainer are discouraged.')
       inputs = dict([

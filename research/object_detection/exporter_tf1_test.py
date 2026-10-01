@@ -1,4 +1,3 @@
-# Lint as: python2, python3
 # Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,10 +19,10 @@ from __future__ import division
 from __future__ import print_function
 import os
 import unittest
+from google.protobuf import text_format
 import numpy as np
 import six
 import tensorflow.compat.v1 as tf
-from google.protobuf import text_format
 from tensorflow.python.framework import dtypes
 from tensorflow.python.ops import array_ops
 from tensorflow.python.tools import strip_unused_lib
@@ -40,7 +39,7 @@ from object_detection.utils import variables_helper
 if six.PY2:
   import mock  # pylint: disable=g-import-not-at-top
 else:
-  mock = unittest.mock  # pylint: disable=g-import-not-at-top, g-importing-member
+  from unittest import mock  # pylint: disable=g-import-not-at-top, g-importing-member
 
 # pylint: disable=g-import-not-at-top
 try:
@@ -666,7 +665,7 @@ class ExportInferenceGraphTest(tf.test.TestCase):
       keypoints = inference_graph.get_tensor_by_name('detection_keypoints:0')
       masks = inference_graph.get_tensor_by_name('detection_masks:0')
       num_detections = inference_graph.get_tensor_by_name('num_detections:0')
-      with self.assertRaisesRegexp(tf.errors.InvalidArgumentError,
+      with self.assertRaisesRegex(tf.errors.InvalidArgumentError,
                                    'TensorArray.*shape'):
         sess.run(
             [boxes, scores, classes, keypoints, masks, num_detections],
@@ -1169,16 +1168,20 @@ class ExportInferenceGraphTest(tf.test.TestCase):
     g = tf.Graph()
     with g.as_default():
       with tf.name_scope('nearest_upsampling'):
-        x = array_ops.placeholder(dtypes.float32, shape=(8, 10, 10, 8))
-        x_stack = tf.stack([tf.stack([x] * 2, axis=3)] * 2, axis=2)
-        x_reshape = tf.reshape(x_stack, [8, 20, 20, 8])
+        x_1 = array_ops.placeholder(dtypes.float32, shape=(8, 10, 10, 8))
+        x_1_stack_1 = tf.stack([x_1] * 2, axis=3)
+        x_1_reshape_1 = tf.reshape(x_1_stack_1, [8, 10, 20, 8])
+        x_1_stack_2 = tf.stack([x_1_reshape_1] * 2, axis=2)
+        x_1_reshape_2 = tf.reshape(x_1_stack_2, [8, 20, 20, 8])
 
       with tf.name_scope('nearest_upsampling'):
         x_2 = array_ops.placeholder(dtypes.float32, shape=(8, 10, 10, 8))
-        x_stack_2 = tf.stack([tf.stack([x_2] * 2, axis=3)] * 2, axis=2)
-        x_reshape_2 = tf.reshape(x_stack_2, [8, 20, 20, 8])
+        x_2_stack_1 = tf.stack([x_2] * 2, axis=3)
+        x_2_reshape_1 = tf.reshape(x_2_stack_1, [8, 10, 20, 8])
+        x_2_stack_2 = tf.stack([x_2_reshape_1] * 2, axis=2)
+        x_2_reshape_2 = tf.reshape(x_2_stack_2, [8, 20, 20, 8])
 
-      t = x_reshape + x_reshape_2
+      t = x_1_reshape_2 + x_2_reshape_2
 
       exporter.rewrite_nn_resize_op()
 

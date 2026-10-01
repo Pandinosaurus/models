@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,12 +20,14 @@ handled object with a standardized configuration.
 """
 from official.nlp.modeling.networks.albert_encoder import AlbertEncoder
 from official.nlp.modeling.networks.bert_encoder import BertEncoder
+from official.nlp.modeling.networks.bert_encoder import BertEncoderV2
 from official.nlp.modeling.networks.classification import Classification
 from official.nlp.modeling.networks.encoder_scaffold import EncoderScaffold
+from official.nlp.modeling.networks.fnet import FNet
+from official.nlp.modeling.networks.funnel_transformer import FunnelTransformerEncoder
 from official.nlp.modeling.networks.mobile_bert_encoder import MobileBERTEncoder
 from official.nlp.modeling.networks.packed_sequence_embedding import PackedSequenceEmbedding
 from official.nlp.modeling.networks.span_labeling import SpanLabeling
 from official.nlp.modeling.networks.span_labeling import XLNetSpanLabeling
+from official.nlp.modeling.networks.sparse_mixer import SparseMixer
 from official.nlp.modeling.networks.xlnet_base import XLNetBase
-# Backward compatibility. The modules are deprecated.
-TransformerEncoder = BertEncoder

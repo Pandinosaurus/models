@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 import json
 import os
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 
 def _collective_communication(all_reduce_alg):
@@ -96,14 +96,16 @@ def get_distribution_strategy(distribution_strategy="mirrored",
                               num_packs=1,
                               tpu_address=None,
                               **kwargs):
-  """Return a DistributionStrategy for running the model.
+  """Return a Strategy for running the model.
 
   Args:
     distribution_strategy: a string specifying which distribution strategy to
       use. Accepted values are "off", "one_device", "mirrored",
       "parameter_server", "multi_worker_mirrored", and "tpu" -- case
-      insensitive. "off" means not to use Distribution Strategy; "tpu" means to
-      use TPUStrategy using `tpu_address`.
+      insensitive. "tpu" means to use TPUStrategy using `tpu_address`.
+      "off" means to use the default strategy which is obtained from
+      tf.distribute.get_strategy (for details on the default strategy, see
+      https://www.tensorflow.org/guide/distributed_training#default_strategy).
     num_gpus: Number of GPUs to run this model.
     all_reduce_alg: Optional. Specifies which algorithm to use when performing
       all-reduce. For `MirroredStrategy`, valid values are "nccl" and
@@ -117,7 +119,7 @@ def get_distribution_strategy(distribution_strategy="mirrored",
     **kwargs: Additional kwargs for internal usages.
 
   Returns:
-    tf.distribute.DistibutionStrategy object.
+    tf.distribute.Strategy object.
   Raises:
     ValueError: if `distribution_strategy` is "off" or "one_device" and
       `num_gpus` is larger than 1; or `num_gpus` is negative or if
@@ -139,14 +141,39 @@ def get_distribution_strategy(distribution_strategy="mirrored",
   distribution_strategy = distribution_strategy.lower()
   if distribution_strategy == "off":
     if num_gpus > 1:
-      raise ValueError("When {} GPUs are specified, distribution_strategy "
-                       "flag cannot be set to `off`.".format(num_gpus))
-    return None
+      raise ValueError(f"When {num_gpus} GPUs are specified, "
+                       "distribution_strategy flag cannot be set to `off`.")
+    # Return the default distribution strategy.
+    return tf.distribute.get_strategy()
 
   if distribution_strategy == "tpu":
     # When tpu_address is an empty string, we communicate with local TPUs.
-    cluster_resolver = tpu_initialize(tpu_address)
-    return tf.distribute.TPUStrategy(cluster_resolver)
+    # Bug workaround that in v5p we need to explicitly specify the device
+    # assignment when using tpu strategy, adding device assignment to the
+    # strategy.
+    cluster_resolver = tf.distribute.cluster_resolver.TPUClusterResolver(
+        tpu=tpu_address
+    )
+    if tpu_address not in ("", "local"):
+      tf.config.experimental_connect_to_cluster(cluster_resolver)
+    topology = tf.tpu.experimental.initialize_tpu_system(cluster_resolver)
+
+    device_assignment = None
+    if hasattr(tf.tpu.experimental, "HardWareFeature"):
+      hardware_feature = tf.tpu.experimental.HardWareFeature(
+          cluster_resolver.tpu_hardware_feature
+      )
+      if (
+          hardware_feature.embedding_feature
+          == tf.tpu.experimental.HardwareFeature.EmbeddingFeature.V2  # pyrefly: ignore[missing-attribute]
+      ):
+        tpu_metadata = cluster_resolver.get_tpu_system_metadata()
+        device_assignment = tf.tpu.experimental.DeviceAssignment.build(
+            topology, num_replicas=tpu_metadata.num_cores
+        )
+
+    return tf.distribute.TPUStrategy(
+        cluster_resolver, experimental_device_assignment=device_assignment)
 
   if distribution_strategy == "multi_worker_mirrored":
     return tf.distribute.experimental.MultiWorkerMirroredStrategy(

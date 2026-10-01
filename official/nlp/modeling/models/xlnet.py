@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,15 +15,15 @@
 """XLNet models."""
 # pylint: disable=g-classes-have-attributes
 
-from typing import Any, Mapping, Union
+from typing import Any, Mapping, Optional, Union
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.nlp.modeling import layers
 from official.nlp.modeling import networks
 
 
-class XLNetMaskedLM(tf.keras.layers.Layer):
+class XLNetMaskedLM(tf_keras.layers.Layer):
   """XLNet pretraining head."""
 
   def __init__(self,
@@ -40,12 +40,12 @@ class XLNetMaskedLM(tf.keras.layers.Layer):
     self._activation = activation
 
   def build(self, input_shape):
-    self.dense = tf.keras.layers.Dense(
+    self.dense = tf_keras.layers.Dense(
         units=self._hidden_size,
         activation=self._activation,
         kernel_initializer=self._initializer,
         name='transform/dense')
-    self.layer_norm = tf.keras.layers.LayerNormalization(
+    self.layer_norm = tf_keras.layers.LayerNormalization(
         axis=-1, epsilon=1e-12, name='transform/LayerNorm')
     self.bias = self.add_weight(
         'output_bias/bias',
@@ -76,8 +76,8 @@ class XLNetMaskedLM(tf.keras.layers.Layer):
     return dict(list(base_config.items()) + list(config.items()))
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class XLNetPretrainer(tf.keras.Model):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class XLNetPretrainer(tf_keras.Model):
   """XLNet-based pretrainer.
 
   This is an implementation of the network structure surrounding a
@@ -96,10 +96,10 @@ class XLNetPretrainer(tf.keras.Model):
 
   def __init__(
       self,
-      network: Union[tf.keras.layers.Layer, tf.keras.Model],
+      network: Union[tf_keras.layers.Layer, tf_keras.Model],
       mlm_activation=None,
       mlm_initializer='glorot_uniform',
-      name: str = None,
+      name: Optional[str] = None,
       **kwargs):
     super().__init__(name=name, **kwargs)
     self._config = {
@@ -117,7 +117,7 @@ class XLNetPretrainer(tf.keras.Model):
         hidden_size=self._hidden_size,
         initializer=self._initializer)
 
-  def call(self, inputs: Mapping[str, Any]):
+  def call(self, inputs: Mapping[str, Any]):  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
     input_word_ids = inputs['input_word_ids']
     input_type_ids = inputs['input_type_ids']
     masked_tokens = inputs['masked_tokens']
@@ -152,8 +152,8 @@ class XLNetPretrainer(tf.keras.Model):
     return dict(encoder=self._network)
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class XLNetClassifier(tf.keras.Model):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class XLNetClassifier(tf_keras.Model):
   """Classifier model based on XLNet.
 
   This is an implementation of the network structure surrounding a
@@ -171,15 +171,17 @@ class XLNetClassifier(tf.keras.Model):
       Defaults to a RandomNormal initializer.
     summary_type: Method used to summarize a sequence into a compact vector.
     dropout_rate: The dropout probability of the cls head.
+    head_name: Name of the classification head.
   """
 
   def __init__(
       self,
-      network: Union[tf.keras.layers.Layer, tf.keras.Model],
+      network: Union[tf_keras.layers.Layer, tf_keras.Model],
       num_classes: int,
-      initializer: tf.keras.initializers.Initializer = 'random_normal',
+      initializer: tf_keras.initializers.Initializer = 'random_normal',  # pyrefly: ignore[bad-function-definition]
       summary_type: str = 'last',
       dropout_rate: float = 0.1,
+      head_name: str = 'sentence_prediction',  # pytype: disable=annotation-type-mismatch  # typed-keras
       **kwargs):
     super().__init__(**kwargs)
     self._network = network
@@ -192,6 +194,7 @@ class XLNetClassifier(tf.keras.Model):
         'num_classes': num_classes,
         'summary_type': summary_type,
         'dropout_rate': dropout_rate,
+        'head_name': head_name,
     }
 
     if summary_type == 'last':
@@ -207,9 +210,9 @@ class XLNetClassifier(tf.keras.Model):
         initializer=initializer,
         dropout_rate=dropout_rate,
         cls_token_idx=cls_token_idx,
-        name='sentence_prediction')
+        name=head_name)
 
-  def call(self, inputs: Mapping[str, Any]):
+  def call(self, inputs: Mapping[str, Any]):  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
     input_ids = inputs['input_word_ids']
     segment_ids = inputs['input_type_ids']
     input_mask = tf.cast(inputs['input_mask'], tf.float32)
@@ -241,8 +244,8 @@ class XLNetClassifier(tf.keras.Model):
     return items
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class XLNetSpanLabeler(tf.keras.Model):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class XLNetSpanLabeler(tf_keras.Model):
   """Span labeler model based on XLNet.
 
   This is an implementation of the network structure surrounding a
@@ -263,12 +266,12 @@ class XLNetSpanLabeler(tf.keras.Model):
 
   def __init__(
       self,
-      network: Union[tf.keras.layers.Layer, tf.keras.Model],
+      network: Union[tf_keras.layers.Layer, tf_keras.Model],
       start_n_top: int = 5,
       end_n_top: int = 5,
       dropout_rate: float = 0.1,
-      span_labeling_activation: tf.keras.initializers.Initializer = 'tanh',
-      initializer: tf.keras.initializers.Initializer = 'glorot_uniform',
+      span_labeling_activation: tf_keras.initializers.Initializer = 'tanh',  # pyrefly: ignore[bad-function-definition]
+      initializer: tf_keras.initializers.Initializer = 'glorot_uniform',  # pytype: disable=annotation-type-mismatch  # typed-keras
       **kwargs):
     super().__init__(**kwargs)
     self._config = {
@@ -302,7 +305,7 @@ class XLNetSpanLabeler(tf.keras.Model):
         dropout_rate=self._dropout_rate,
         initializer=self._initializer)
 
-  def call(self, inputs: Mapping[str, Any]):
+  def call(self, inputs: Mapping[str, Any]):  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
     input_word_ids = inputs['input_word_ids']
     input_type_ids = inputs['input_type_ids']
     input_mask = inputs['input_mask']

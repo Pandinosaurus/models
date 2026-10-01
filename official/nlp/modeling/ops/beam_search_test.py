@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 """Test beam search helper methods."""
 
 from absl.testing import parameterized
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.nlp.modeling.ops import beam_search
 
@@ -54,25 +54,19 @@ class BeamSearchTests(tf.test.TestCase, parameterized.TestCase):
     #                  [16 17 18 19]
     #                  [20 21 22 23]]]
 
-    y = beam_search._gather_beams(x, [[1, 2], [0, 2]], 2, 2)
-    self.assertAllEqual(
-        [[[4, 5, 6, 7], [8, 9, 10, 11]], [[12, 13, 14, 15], [20, 21, 22, 23]]],
-        y)
-
-  def test_gather_topk_beams(self):
-    x = tf.reshape(tf.range(24), [2, 3, 4])
-    x_scores = [[0, 1, 1], [1, 0, 1]]
-
-    y = beam_search._gather_topk_beams(x, x_scores, 2, 2)
+    y = beam_search.SequenceBeamSearch._gather_beams(x, [[1, 2], [0, 2]], 2, 2)
     self.assertAllEqual(
         [[[4, 5, 6, 7], [8, 9, 10, 11]], [[12, 13, 14, 15], [20, 21, 22, 23]]],
         y)
 
   @parameterized.named_parameters([
-      ('padded_decode_true', True),
-      ('padded_decode_false', False),
+      ('padded_decode_true_with_name', True, 0.0, 'decoding'),
+      ('padded_decode_false_with_name', False, 0.0, 'decoding'),
+      ('padded_decode_true_without_name', True, 0.0, None),
+      ('padded_decode_false_without_name', False, 0.0, None),
+      ('padded_decode_false_with_noise', False, 0.5, 'decoding'),
   ])
-  def test_sequence_beam_search(self, padded_decode):
+  def test_sequence_beam_search(self, padded_decode, noise_multiplier, name):
     # batch_size*beam_size, max_decode_length, vocab_size
     probabilities = tf.constant([[[0.2, 0.7, 0.1], [0.5, 0.3, 0.2],
                                   [0.1, 0.8, 0.1]],
@@ -100,8 +94,109 @@ class BeamSearchTests(tf.test.TestCase, parameterized.TestCase):
         max_decode_length=3,
         eos_id=9,
         padded_decode=padded_decode,
-        dtype=tf.float32)
-    self.assertAllEqual([[[0, 1, 0, 1], [0, 1, 1, 2]]], predictions)
+        dtype=tf.float32,
+        noise_multiplier=noise_multiplier,
+        decoding_name=name,
+    )
+    if noise_multiplier > 0:
+      self.assertAllEqual([[[0, 1, 0, 1], [0, 0, 2, 2]]], predictions)
+    else:
+      self.assertAllEqual([[[0, 1, 0, 1], [0, 1, 1, 2]]], predictions)
+
+  @parameterized.named_parameters([
+      ('padded_decode_true_with_name', True, 0.0, 'decoding'),
+      ('padded_decode_false_with_name', False, 0.0, 'decoding'),
+      ('padded_decode_true_without_name', True, 0.0, None),
+      ('padded_decode_false_without_name', False, 0.0, None),
+      ('padded_decode_false_with_noise', False, 0.5, 'decoding'),
+  ])
+  def test_sequence_beam_search_multi_eos(
+      self, padded_decode, noise_multiplier, name
+  ):
+    # batch_size*beam_size, max_decode_length, vocab_size
+    probabilities = tf.constant([
+        [[0.2, 0.7, 0.1], [0.5, 0.3, 0.2], [0.1, 0.8, 0.1]],
+        [[0.1, 0.8, 0.1], [0.3, 0.4, 0.3], [0.2, 0.1, 0.7]],
+    ])
+    # batch_size, max_decode_length, num_heads, embed_size per head
+    x = tf.zeros([1, 3, 2, 32], dtype=tf.float32)
+    cache = {'layer_%d' % layer: {'k': x, 'v': x} for layer in range(2)}
+
+    def _get_test_symbols_to_logits_fn():
+      """Test function that returns logits for next token."""
+
+      def symbols_to_logits_fn(_, i, cache):
+        logits = tf.cast(probabilities[:, i, :], tf.float32)
+        return logits, cache
+
+      return symbols_to_logits_fn
+
+    predictions, _ = beam_search.sequence_beam_search(
+        symbols_to_logits_fn=_get_test_symbols_to_logits_fn(),
+        initial_ids=tf.zeros([1], dtype=tf.int32),
+        initial_cache=cache,
+        vocab_size=3,
+        beam_size=2,
+        alpha=0.6,
+        max_decode_length=3,
+        eos_id=[9, 10],
+        padded_decode=padded_decode,
+        dtype=tf.float32,
+        noise_multiplier=noise_multiplier,
+        decoding_name=name,
+    )
+    if noise_multiplier > 0:
+      self.assertAllEqual([[[0, 1, 0, 1], [0, 0, 2, 2]]], predictions)
+    else:
+      self.assertAllEqual([[[0, 1, 0, 1], [0, 1, 1, 2]]], predictions)
+
+  @parameterized.named_parameters([
+      ('padded_decode_true_with_name', True, 0.0, 'decoding'),
+      ('padded_decode_false_with_name', False, 0.0, 'decoding'),
+      ('padded_decode_true_without_name', True, 0.0, None),
+      ('padded_decode_false_without_name', False, 0.0, None),
+      ('padded_decode_false_with_noise', False, 0.5, 'decoding'),
+  ])
+  def test_sequence_beam_search_with_prefix_constraint(
+      self, padded_decode, noise_multiplier, name
+  ):
+    # batch_size*beam_size, max_decode_length, vocab_size
+    probabilities = tf.constant([
+        [[0.2, 0.7, 0.1], [0.5, 0.3, 0.2], [0.1, 0.8, 0.1]],
+        [[0.1, 0.8, 0.1], [0.3, 0.4, 0.3], [0.2, 0.1, 0.7]],
+    ])
+    # batch_size, max_decode_length, num_heads, embed_size per head
+    x = tf.zeros([1, 3, 2, 32], dtype=tf.float32)
+    cache = {'layer_%d' % layer: {'k': x, 'v': x} for layer in range(2)}
+
+    def _get_test_symbols_to_logits_fn():
+      """Test function that returns logits for next token."""
+
+      def symbols_to_logits_fn(_, i, cache):
+        logits = tf.cast(probabilities[:, i, :], tf.float32)
+        return logits, cache
+
+      return symbols_to_logits_fn
+
+    predictions, _ = beam_search.sequence_beam_search(
+        symbols_to_logits_fn=_get_test_symbols_to_logits_fn(),
+        initial_ids=tf.zeros([1], dtype=tf.int32),
+        initial_cache=cache,
+        vocab_size=3,
+        beam_size=2,
+        alpha=0.6,
+        max_decode_length=3,
+        eos_id=[9, 10],
+        padded_decode=padded_decode,
+        dtype=tf.float32,
+        noise_multiplier=noise_multiplier,
+        decoding_name=name,
+        constraint_mask=tf.constant([1, 0, 0]),
+    )
+    if noise_multiplier > 0:
+      self.assertAllEqual([[[0, 0, 0, 1], [0, 0, 0, 2]]], predictions)
+    else:
+      self.assertAllEqual([[[0, 0, 0, 1], [0, 0, 1, 2]]], predictions)
 
 
 if __name__ == '__main__':

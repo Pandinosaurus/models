@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,10 +14,10 @@
 
 """Customized Sigmoid activation."""
 
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
+@tf_keras.utils.register_keras_serializable(package='Text')
 def hard_sigmoid(features):
   """Computes the hard sigmoid activation function.
 
@@ -28,4 +28,4 @@ def hard_sigmoid(features):
     The activation value.
   """
   features = tf.convert_to_tensor(features)
-  return tf.nn.relu6(features + tf.constant(3.)) * 0.16667
+  return tf.nn.relu6(features + tf.cast(3., features.dtype)) * 0.16667

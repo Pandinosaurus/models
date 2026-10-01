@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,15 +15,57 @@
 """Base configurations to standardize experiments."""
 
 import copy
-import functools
-from typing import Any, List, Mapping, Optional, Type
-from absl import logging
-
 import dataclasses
-import tensorflow as tf
+import functools
+import inspect
+import types
+import typing
+from typing import Any, List, Mapping, Optional, Type, Union
+
+from absl import logging
+import tensorflow as tf, tf_keras
 import yaml
 
 from official.modeling.hyperparams import params_dict
+
+
+_BOUND = set()
+
+
+def bind(config_cls):
+  """Bind a class to config cls."""
+  if not inspect.isclass(config_cls):
+    raise ValueError('The bind decorator is supposed to apply on the class '
+                     f'attribute. Received {config_cls}, not a class.')
+
+  def decorator(builder):
+    if config_cls in _BOUND:
+      raise ValueError('Inside a program, we should not bind the config with a'
+                       ' class twice.')
+    if inspect.isclass(builder):
+      config_cls._BUILDER = builder  # pylint: disable=protected-access
+    elif inspect.isfunction(builder):
+
+      def _wrapper(self, *args, **kwargs):  # pylint: disable=unused-argument
+        return builder(*args, **kwargs)
+
+      config_cls._BUILDER = _wrapper  # pylint: disable=protected-access
+    else:
+      raise ValueError(f'The `BUILDER` type is not supported: {builder}')
+    _BOUND.add(config_cls)
+    return builder
+
+  return decorator
+
+
+def _is_optional(field):
+  # Two styles of annotating optional fields:
+  #   Optional[T] -> typing.Union
+  #   T | None    -> types.UnionType
+  is_union = typing.get_origin(field) in (Union, types.UnionType)
+  # An optional field is a union of a type, and NoneType.
+  args = typing.get_args(field)
+  return is_union and len(args) == 2 and type(None) in args
 
 
 @dataclasses.dataclass
@@ -40,7 +82,8 @@ class Config(params_dict.ParamsDict):
     If you define/annotate some field as Dict, the field will convert to a
     `Config` instance and lose the dictionary type.
   """
-
+  # The class or method to bind with the params class.
+  _BUILDER = None
   # It's safe to add bytes and other immutable types here.
   IMMUTABLE_TYPES = (str, int, float, bool, type(None))
   # It's safe to add set, frozenset and other collections here.
@@ -48,6 +91,29 @@ class Config(params_dict.ParamsDict):
 
   default_params: dataclasses.InitVar[Optional[Mapping[str, Any]]] = None
   restrictions: dataclasses.InitVar[Optional[List[str]]] = None
+
+  def __post_init__(self, default_params, restrictions):
+    super().__init__(
+        default_params=default_params,
+        restrictions=restrictions)
+
+  @property
+  def BUILDER(self):
+    return self._BUILDER
+
+  @classmethod
+  def _get_annotations(cls):
+    """Returns valid annotations.
+
+    Note: this is similar to dataclasses.__annotations__ except it also includes
+      annotations from its parent classes.
+    """
+    all_annotations = typing.get_type_hints(cls)
+    # Removes Config class annotation from the value, e.g., default_params,
+    # restrictions, etc.
+    for k in Config.__annotations__:
+      del all_annotations[k]
+    return all_annotations
 
   @classmethod
   def _isvalidsequence(cls, v):
@@ -110,11 +176,15 @@ class Config(params_dict.ParamsDict):
       raise TypeError('Unknown type: {!r}'.format(type(v)))
 
   @classmethod
-  def _get_subconfig_type(cls, k) -> Type[params_dict.ParamsDict]:
+  def _get_subconfig_type(
+      cls, k, subconfig_type=None
+  ) -> Type[params_dict.ParamsDict]:
     """Get element type by the field name.
 
     Args:
       k: the key/name of the field.
+      subconfig_type: default subconfig_type. If None, it is set to
+        Config.
 
     Returns:
       Config as default. If a type annotation is found for `k`,
@@ -122,30 +192,35 @@ class Config(params_dict.ParamsDict):
       2) returns the element type if the annotation of `k` is List[SubType]
          or Tuple[SubType].
     """
-    subconfig_type = Config
-    if k in cls.__annotations__:
-      # Directly Config subtype.
-      type_annotation = cls.__annotations__[k]  # pytype: disable=invalid-annotation
-      if (isinstance(type_annotation, type) and
-          issubclass(type_annotation, Config)):
-        subconfig_type = cls.__annotations__[k]  # pytype: disable=invalid-annotation
-      else:
-        # Check if the field is a sequence of subtypes.
-        field_type = getattr(type_annotation, '__origin__', type(None))
-        if (isinstance(field_type, type) and
-            issubclass(field_type, cls.SEQUENCE_TYPES)):
-          element_type = getattr(type_annotation, '__args__', [type(None)])[0]
-          subconfig_type = (
-              element_type if issubclass(element_type, params_dict.ParamsDict)
-              else subconfig_type)
-    return subconfig_type
+    if not subconfig_type:
+      subconfig_type = Config
 
-  def __post_init__(self, default_params, restrictions, *args, **kwargs):
-    super().__init__(
-        default_params=default_params,
-        restrictions=restrictions,
-        *args,
-        **kwargs)
+    def _is_subtype(x, target) -> bool:
+      return isinstance(x, type) and issubclass(x, target)
+
+    annotations = cls._get_annotations()
+    if k in annotations:
+      # Directly Config subtype.
+      type_annotation = annotations[k]
+      i = 0
+      # Loop for striping the Optional annotation.
+      traverse_in = True
+      while traverse_in:
+        i += 1
+        if _is_subtype(type_annotation, Config):
+          subconfig_type = type_annotation
+          break
+        else:
+          # If the field is a sequence of sub-config types or an Optional
+          # sub-config, then strip the container and process the sub-config.
+          is_sequence = _is_subtype(
+              typing.get_origin(type_annotation), cls.SEQUENCE_TYPES
+          )
+          if is_sequence or _is_optional(type_annotation):
+            type_annotation = typing.get_args(type_annotation)[0]
+            continue
+        traverse_in = False
+    return subconfig_type
 
   def _set(self, k, v):
     """Overrides same method in ParamsDict.
@@ -171,8 +246,11 @@ class Config(params_dict.ParamsDict):
         # If the key not exist or the value is None, a new Config-family object
         # sould be created for the key.
         self.__dict__[k] = subconfig_type(v)
-      else:
+      elif hasattr(self.__dict__[k], 'override'):
         self.__dict__[k].override(v)
+      else:
+        # The key exists but it cannot be overridden. For example, it's a str.
+        self.__dict__[k] = subconfig_type(v)
     elif not is_null(k) and isinstance(v, self.SEQUENCE_TYPES) and all(
         [not isinstance(e, self.IMMUTABLE_TYPES) for e in v]):
       if len(self.__dict__[k]) == len(v):
@@ -190,6 +268,11 @@ class Config(params_dict.ParamsDict):
       self.__dict__[k] = self._import_config(v, subconfig_type)
 
   def __setattr__(self, k, v):
+    if k == 'BUILDER' or k == '_BUILDER':
+      raise AttributeError('`BUILDER` is a property and `_BUILDER` is the '
+                           'reserved class attribute. We should only assign '
+                           '`_BUILDER` at the class level.')
+
     if k not in self.RESERVED_ATTR:
       if getattr(self, '_locked', False):
         raise ValueError('The Config has been locked. ' 'No change is allowed.')
@@ -220,9 +303,11 @@ class Config(params_dict.ParamsDict):
         else:
           self._set(k, v)
       else:
-        if isinstance(v, dict) and self.__dict__[k]:
+        if isinstance(v, dict) and hasattr(self.__dict__[k], '_override'):
           self.__dict__[k]._override(v, is_strict)  # pylint: disable=protected-access
-        elif isinstance(v, params_dict.ParamsDict) and self.__dict__[k]:
+        elif isinstance(v, params_dict.ParamsDict) and hasattr(
+            self.__dict__[k], '_override'
+        ):
           self.__dict__[k]._override(v.as_dict(), is_strict)  # pylint: disable=protected-access
         else:
           self._set(k, v)
@@ -264,7 +349,10 @@ class Config(params_dict.ParamsDict):
   @classmethod
   def from_args(cls, *args, **kwargs):
     """Builds a config from the given list of arguments."""
+    # Note we intend to keep `__annotations__` instead of `_get_annotations`.
+    # Assuming a parent class of (a, b) with the sub-class of (c, d), the
+    # sub-class will take (c, d) for args, rather than starting from (a, b).
     attributes = list(cls.__annotations__.keys())
     default_params = {a: p for a, p in zip(attributes, args)}
     default_params.update(kwargs)
-    return cls(default_params)
+    return cls(default_params=default_params)

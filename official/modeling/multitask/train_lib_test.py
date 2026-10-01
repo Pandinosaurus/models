@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """Tests for multitask.train_lib."""
 from absl.testing import parameterized
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from tensorflow.python.distribute import combinations
 from tensorflow.python.distribute import strategy_combinations
@@ -58,19 +58,20 @@ class TrainLibTest(tf.test.TestCase, parameterized.TestCase):
               strategy_combinations.one_device_strategy_gpu,
           ],
           mode='eager',
+          optimizer=['sgd_experimental', 'sgd'],
           flag_mode=['train', 'eval', 'train_and_eval']))
-  def test_end_to_end(self, distribution_strategy, flag_mode):
+  def test_end_to_end(self, distribution_strategy, optimizer, flag_mode):
     model_dir = self.get_temp_dir()
     experiment_config = configs.MultiTaskExperimentConfig(
         task=configs.MultiTaskConfig(
             task_routines=(
                 configs.TaskRoutine(
-                    task_name='foo',
-                    task_config=test_utils.FooConfig()),
+                    task_name='foo', task_config=test_utils.FooConfig()),
                 configs.TaskRoutine(
                     task_name='bar', task_config=test_utils.BarConfig()))))
     experiment_config = params_dict.override_params_dict(
         experiment_config, self._test_config, is_strict=False)
+    experiment_config.trainer.optimizer_config.optimizer.type = optimizer
     with distribution_strategy.scope():
       test_multitask = multitask.MultiTask.from_config(experiment_config.task)
       model = test_utils.MockMultiTaskModel()
@@ -95,18 +96,20 @@ class TrainLibTest(tf.test.TestCase, parameterized.TestCase):
     model_dir = self.get_temp_dir()
     experiment_config = configs.MultiEvalExperimentConfig(
         task=test_utils.FooConfig(),
-        eval_tasks=configs.MultiTaskConfig(
-            task_routines=(
-                configs.TaskRoutine(
-                    task_name='foo',
-                    task_config=test_utils.FooConfig()),
-                configs.TaskRoutine(
-                    task_name='bar', task_config=test_utils.BarConfig()))))
+        eval_tasks=(configs.TaskRoutine(
+            task_name='foo', task_config=test_utils.FooConfig(), eval_steps=2),
+                    configs.TaskRoutine(
+                        task_name='bar',
+                        task_config=test_utils.BarConfig(),
+                        eval_steps=3)))
     experiment_config = params_dict.override_params_dict(
         experiment_config, self._test_config, is_strict=False)
     with distribution_strategy.scope():
       train_task = task_factory.get_task(experiment_config.task)
-      eval_tasks = multitask.MultiTask.from_config(experiment_config.eval_tasks)
+      eval_tasks = [
+          task_factory.get_task(config.task_config, name=config.task_name)
+          for config in experiment_config.eval_tasks
+      ]
     train_lib.run_experiment_with_multitask_eval(
         distribution_strategy=distribution_strategy,
         train_task=train_task,

@@ -22,6 +22,8 @@ the coordinates of the keypoint.
 import numpy as np
 import tensorflow.compat.v1 as tf
 
+from object_detection.utils import shape_utils
+
 
 def scale(keypoints, y_scale, x_scale, scope=None):
   """Scales keypoint coordinates in x and y dimensions.
@@ -317,6 +319,8 @@ def rot90(keypoints, rotation_permutation=None, scope=None):
     return new_keypoints
 
 
+
+
 def keypoint_weights_from_visibilities(keypoint_visibilities,
                                        per_keypoint_weights=None):
   """Returns a keypoint weights tensor.
@@ -343,7 +347,8 @@ def keypoint_weights_from_visibilities(keypoint_visibilities,
   """
   keypoint_visibilities.get_shape().assert_has_rank(2)
   if per_keypoint_weights is None:
-    num_keypoints = keypoint_visibilities.shape.as_list()[1]
+    num_keypoints = shape_utils.combined_static_and_dynamic_shape(
+        keypoint_visibilities)[1]
     per_keypoint_weight_mult = tf.ones((1, num_keypoints,), dtype=tf.float32)
   else:
     per_keypoint_weight_mult = tf.expand_dims(per_keypoint_weights, axis=0)

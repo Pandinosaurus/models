@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import pprint
-from typing import List, Tuple
+import dataclasses
+from typing import List, Optional, Tuple
 
 from absl.testing import parameterized
-import dataclasses
-import tensorflow as tf
+import tensorflow as tf, tf_keras
+
 from official.modeling.hyperparams import base_config
 
 
@@ -31,7 +32,8 @@ class DumpConfig1(base_config.Config):
 class DumpConfig2(base_config.Config):
   c: int = 2
   d: str = 'text'
-  e: DumpConfig1 = DumpConfig1()
+  e: DumpConfig1 = dataclasses.field(default_factory=DumpConfig1)
+  optional_e: Optional[DumpConfig1] = None
 
 
 @dataclasses.dataclass
@@ -52,6 +54,17 @@ class DumpConfig4(DumpConfig2):
 class DummyConfig5(base_config.Config):
   y: Tuple[DumpConfig2, ...] = (DumpConfig2(), DumpConfig4())
   z: Tuple[str] = ('a',)
+
+
+@dataclasses.dataclass
+class DumpConfig6(base_config.Config):
+  test_config1: Optional[DumpConfig1] = None
+
+
+@dataclasses.dataclass
+class ModernOptionalConfig(base_config.Config):
+  leaf: DumpConfig1 | None = None
+  leaves: tuple[DumpConfig1 | None, ...] = tuple()
 
 
 class BaseConfigTest(parameterized.TestCase, tf.test.TestCase):
@@ -90,6 +103,31 @@ class BaseConfigTest(parameterized.TestCase, tf.test.TestCase):
     params = base_config.Config()
     with self.assertRaises(AttributeError):
       _ = params.a
+
+  def test_cls(self):
+    params = base_config.Config()
+    with self.assertRaisesRegex(
+        AttributeError,
+        '`BUILDER` is a property and `_BUILDER` is the reserved'):
+      params.BUILDER = DumpConfig2
+    with self.assertRaisesRegex(
+        AttributeError,
+        '`BUILDER` is a property and `_BUILDER` is the reserved'):
+      params._BUILDER = DumpConfig2
+
+    base_config.bind(DumpConfig1)(DumpConfig2)
+    params = DumpConfig1()
+    self.assertEqual(params.BUILDER, DumpConfig2)
+    with self.assertRaisesRegex(ValueError,
+                                'Inside a program, we should not bind'):
+      base_config.bind(DumpConfig1)(DumpConfig2)
+
+    def _test():
+      return 'test'
+
+    base_config.bind(DumpConfig2)(_test)
+    params = DumpConfig2()
+    self.assertEqual(params.BUILDER(), 'test')
 
   def test_nested_config_types(self):
     config = DumpConfig3()
@@ -296,6 +334,17 @@ class BaseConfigTest(parameterized.TestCase, tf.test.TestCase):
     self.assertEqual(type(params.a[1].c), base_config.Config)
     self.assertEqual(pprint.pformat(params.a[1].c.d), '5')
 
+  def test_override_scalar_with_dict_replaces_the_whole_value(self):
+    params = base_config.Config({'a': 1})
+    params.override({'a': {'b': 2}}, is_strict=False)
+    self.assertEqual(type(params.a), base_config.Config)
+    self.assertEqual(params.a.b, 2)
+
+  def test_override_dict_with_scalar_replaces_the_whole_value(self):
+    params = base_config.Config({'a': {'b': 2}})
+    params.override({'a': 1}, is_strict=False)
+    self.assertEqual(params.a, 1)
+
   @parameterized.parameters(
       ([{}],),
       (({},),),
@@ -316,6 +365,34 @@ class BaseConfigTest(parameterized.TestCase, tf.test.TestCase):
             }
         ]),
         "['s', 1, 1.0, True, None, {}, [], (), {8: 9, (2,): (3, [4], {6: 7})}]")
+
+  def test_with_superclass_override(self):
+    config = DumpConfig2()
+    config.override({'optional_e': {'a': 2}})
+    self.assertEqual(
+        config.optional_e.as_dict(),
+        {
+            'a': 2,
+            'b': 'text',
+        },
+    )
+
+    # Previously, the following will fail. See b/274696969 for context.
+    config = DumpConfig3()
+    config.override({'optional_e': {'a': 2}})
+    self.assertEqual(
+        config.optional_e.as_dict(),
+        {
+            'a': 2,
+            'b': 'text',
+        },
+    )
+
+  def test_get_annotations_without_base_config_leak(self):
+    with self.assertRaisesRegex(
+        KeyError, "The key 'restrictions' does not exist"
+    ):
+      DumpConfig3().override({'restrictions': None})
 
   def test_with_restrictions(self):
     restrictions = ['e.a<c']
@@ -354,6 +431,27 @@ class BaseConfigTest(parameterized.TestCase, tf.test.TestCase):
     }, is_strict=True)
     self.assertEmpty(config.y)
     self.assertEmpty(config.z)
+
+  def test_correctly_display_optional_field(self):
+    c = DumpConfig6()
+    c.override({'test_config1': {'b': 'abc'}})
+    self.assertEqual(f'{c}',
+                     "DumpConfig6(test_config1=DumpConfig1(a=1, b='abc'))")
+    self.assertIsInstance(c.test_config1, DumpConfig1)
+
+  def test_modern_optional_syntax(self):
+    config = ModernOptionalConfig()
+    self.assertIsNone(config.leaf)
+    self.assertEqual(config.leaves, tuple())
+
+    replaced = config.replace(leaf={'a': 2}, leaves=({'a': 3}, {'b': 'foo'}))
+    self.assertEqual(replaced.leaf.a, 2)
+    self.assertEqual(replaced.leaf.b, 'text')
+    self.assertLen(replaced.leaves, 2)
+    self.assertEqual(replaced.leaves[0].a, 3)
+    self.assertEqual(replaced.leaves[0].b, 'text')
+    self.assertEqual(replaced.leaves[1].a, 1)
+    self.assertEqual(replaced.leaves[1].b, 'foo')
 
 
 if __name__ == '__main__':

@@ -1,10 +1,8 @@
 licenses(["notice"])
 
-package(
-    default_visibility = [
-        "//visibility:public",
-    ],
-)
+package(default_visibility = [
+    "//visibility:public",
+])
 
 cc_library(
     name = "sgnn_projection",
@@ -90,11 +88,12 @@ py_binary(
     main = "run_tflite.py",
     python_version = "PY3",
     deps = [
+        ":sgnn_projection_op_resolver",
         # Expect numpy installed
         # package TFLite flex delegate
         # package TFLite interpreter
-        "@org_tflite_support//tensorflow_lite_support/custom_ops/kernel:ngrams_op_resolver",
-        "@org_tflite_support//tensorflow_lite_support/custom_ops/kernel:whitespace_tokenizer_op_resolver",
+        "@org_tflite_support//tensorflow_lite_support/custom_ops/kernel:_pywrap_ngrams_op_resolver",
+        "@org_tflite_support//tensorflow_lite_support/custom_ops/kernel:_pywrap_whitespace_tokenizer_op_resolver",
         # Expect tensorflow text installed
     ],
 )

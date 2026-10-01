@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,15 +15,14 @@
 """An embedding network supporting packed sequences and position ids."""
 # pylint: disable=g-classes-have-attributes
 import collections
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.modeling import tf_utils
-from official.nlp import keras_nlp
 from official.nlp.modeling import layers
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class PackedSequenceEmbedding(tf.keras.Model):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class PackedSequenceEmbedding(tf_keras.Model):
   """An embedding network supporting packed sequences and position ids.
 
   This network implements an embedding layer similar to the one described in
@@ -61,34 +60,32 @@ class PackedSequenceEmbedding(tf.keras.Model):
                use_position_id=False,
                pack_multiple_sequences=False,
                **kwargs):
-    initializer = tf.keras.initializers.get(initializer)
+    initializer = tf_keras.initializers.get(initializer)
+    if embedding_width is None:
+      embedding_width = hidden_size
     config_dict = {
         'vocab_size': vocab_size,
         'type_vocab_size': type_vocab_size,
         'embedding_width': embedding_width,
         'hidden_size': hidden_size,
         'max_seq_length': max_seq_length,
-        'initializer': tf.keras.initializers.serialize(initializer),
+        'initializer': tf_keras.initializers.serialize(initializer),
         'dropout_rate': dropout_rate,
         'use_position_id': use_position_id,
         'pack_multiple_sequences': pack_multiple_sequences,
     }
 
-    word_ids = tf.keras.layers.Input(
+    word_ids = tf_keras.layers.Input(
         shape=(None,), dtype=tf.int32, name='input_word_ids')
-    mask = tf.keras.layers.Input(
+    mask = tf_keras.layers.Input(
         shape=(None,), dtype=tf.int32, name='input_mask')
-    type_ids = tf.keras.layers.Input(
+    type_ids = tf_keras.layers.Input(
         shape=(None,), dtype=tf.int32, name='input_type_ids')
-    inputs = {
-        'input_word_ids': word_ids,
-        'input_mask': mask,
-        'input_type_ids': type_ids,
-    }
+    inputs = [word_ids, mask, type_ids]
     if use_position_id:
-      position_ids = tf.keras.layers.Input(
+      position_ids = tf_keras.layers.Input(
           shape=(None,), dtype=tf.int32, name='position_ids')
-      inputs['position_ids'] = position_ids
+      inputs.append(position_ids)
     else:
       position_ids = None
 
@@ -100,13 +97,13 @@ class PackedSequenceEmbedding(tf.keras.Model):
     embedding_layer = layers.OnDeviceEmbedding(
         vocab_size=vocab_size,
         embedding_width=embedding_width,
-        initializer=initializer,
+        initializer=tf_utils.clone_initializer(initializer),
         name='word_embeddings')
     word_embeddings = embedding_layer(word_ids)
 
     # Always uses dynamic slicing for simplicity.
     position_embedding_layer = PositionEmbeddingWithSubSeqMask(
-        initializer=initializer,
+        initializer=tf_utils.clone_initializer(initializer),
         use_dynamic_slicing=True,
         max_sequence_length=max_seq_length,
         name='position_embedding')
@@ -117,40 +114,40 @@ class PackedSequenceEmbedding(tf.keras.Model):
         layers.OnDeviceEmbedding(
             vocab_size=type_vocab_size,
             embedding_width=embedding_width,
-            initializer=initializer,
+            initializer=tf_utils.clone_initializer(initializer),
             use_one_hot=True,
             name='type_embeddings')(type_ids))
 
-    embeddings = tf.keras.layers.Add()(
+    embeddings = tf_keras.layers.Add()(
         [word_embeddings, position_embeddings, type_embeddings])
-    embeddings = tf.keras.layers.LayerNormalization(
+    embeddings = tf_keras.layers.LayerNormalization(
         name='embeddings/layer_norm', axis=-1, epsilon=1e-12, dtype=tf.float32)(
             embeddings)
-    embeddings = tf.keras.layers.Dropout(
+    embeddings = tf_keras.layers.Dropout(
         rate=dropout_rate, dtype=tf.float32)(
             embeddings)
 
     if embedding_width != hidden_size:
-      embeddings = tf.keras.layers.experimental.EinsumDense(
+      embeddings = tf_keras.layers.EinsumDense(
           '...x,xy->...y',
           output_shape=hidden_size,
           bias_axes=None,
-          kernel_initializer=initializer,
+          kernel_initializer=tf_utils.clone_initializer(initializer),
           name='embedding_projection')(
               embeddings)
 
-    attention_mask = keras_nlp.layers.SelfAttentionMask()(embeddings, mask)
+    attention_mask = layers.SelfAttentionMask()(embeddings, mask)
     if sub_seq_mask is not None:
-      attention_mask = tf.keras.layers.Lambda(
+      attention_mask = tf_keras.layers.Lambda(
           lambda x: x[0] * tf.cast(x[1], x[0].dtype))(
               [attention_mask, sub_seq_mask])
 
     outputs = [embeddings, attention_mask]
-    super(PackedSequenceEmbedding, self).__init__(
+    super().__init__(
         inputs=inputs, outputs=outputs, **kwargs)
     # TF does not track immutable attrs which do not contain Trackables,
     # so by creating a config namedtuple instead of a dict we avoid tracking it.
-    config_cls = collections.namedtuple('Config', config_dict.keys())
+    config_cls = collections.namedtuple('Config', config_dict.keys())  # pyrefly: ignore[bad-class-definition]
     self._config = config_cls(**config_dict)
     self._embedding_layer = embedding_layer
     self._position_embedding_layer = position_embedding_layer
@@ -166,8 +163,8 @@ class PackedSequenceEmbedding(tf.keras.Model):
     return cls(**config)
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class PackedSequenceMask(tf.keras.layers.Layer):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class PackedSequenceMask(tf_keras.layers.Layer):
   """A layer to create a mask to indicate multiple sub sequences."""
 
   def call(self, input_ids):
@@ -192,8 +189,8 @@ class PackedSequenceMask(tf.keras.layers.Layer):
     return tf.equal(seq_ids, tf.transpose(seq_ids, [0, 2, 1]))
 
 
-@tf.keras.utils.register_keras_serializable(package='Text')
-class PositionEmbeddingWithSubSeqMask(tf.keras.layers.Layer):
+@tf_keras.utils.register_keras_serializable(package='Text')
+class PositionEmbeddingWithSubSeqMask(tf_keras.layers.Layer):
   """Creates a positional embedding with sub-sequence masking.
 
   This layer creates a positional embedding as described in "BERT: Pre-training
@@ -224,22 +221,22 @@ class PositionEmbeddingWithSubSeqMask(tf.keras.layers.Layer):
     if 'dtype' not in kwargs:
       kwargs['dtype'] = 'float32'
 
-    super(PositionEmbeddingWithSubSeqMask, self).__init__(**kwargs)
+    super().__init__(**kwargs)
     if use_dynamic_slicing and max_sequence_length is None:
       raise ValueError(
           'If `use_dynamic_slicing` is True, `max_sequence_length` must be set.'
       )
     self._max_sequence_length = max_sequence_length
-    self._initializer = tf.keras.initializers.get(initializer)
+    self._initializer = tf_keras.initializers.get(initializer)
     self._use_dynamic_slicing = use_dynamic_slicing
 
   def get_config(self):
     config = {
         'max_sequence_length': self._max_sequence_length,
-        'initializer': tf.keras.initializers.serialize(self._initializer),
+        'initializer': tf_keras.initializers.serialize(self._initializer),
         'use_dynamic_slicing': self._use_dynamic_slicing,
     }
-    base_config = super(PositionEmbeddingWithSubSeqMask, self).get_config()
+    base_config = super().get_config()
     return dict(list(base_config.items()) + list(config.items()))
 
   def build(self, input_shape):
@@ -276,7 +273,7 @@ class PositionEmbeddingWithSubSeqMask(tf.keras.layers.Layer):
         shape=[weight_sequence_length, width],
         initializer=self._initializer)
 
-    super(PositionEmbeddingWithSubSeqMask, self).build(input_shape)
+    super().build(input_shape)
 
   def call(self, inputs, position_ids=None, sub_sequence_mask=None):
     """Implements call() for the layer.

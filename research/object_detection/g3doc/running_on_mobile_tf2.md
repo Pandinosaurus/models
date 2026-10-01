@@ -13,17 +13,22 @@ on-device machine learning inference with low latency and a small binary size.
 TensorFlow Lite uses many techniques for this such as quantized kernels that
 allow smaller and faster (fixed-point math) models.
 
-This document shows how elgible models from the
+This document shows how eligible models from the
 [TF2 Detection zoo](https://github.com/tensorflow/models/blob/master/research/object_detection/g3doc/tf2_detection_zoo.md)
-can be converted for inference with TFLite.
+can be converted for inference with TFLite. See this Colab tutorial for a
+runnable tutorial that walks you through the steps explained in this document:
+
+<a target="_blank" href="https://colab.research.google.com/github/tensorflow/models/blob/master/research/object_detection/colab_tutorials/convert_odt_model_to_TFLite.ipynb"><img src="https://www.tensorflow.org/images/colab_logo_32px.png" />Run
+in Google Colab</a>
 
 For an end-to-end Python guide on how to fine-tune an SSD model for mobile
 inference, look at
 [this Colab](../colab_tutorials/eager_few_shot_od_training_tflite.ipynb).
 
 **NOTE:** TFLite currently only supports **SSD Architectures** (excluding
-EfficientDet) for boxes-based detection. Support for EfficientDet is coming
-soon.
+EfficientDet) for boxes-based detection. Support for EfficientDet is provided
+via the [TFLite Model Maker](https://www.tensorflow.org/lite/tutorials/model_maker_object_detection)
+library.
 
 The output model has the following inputs & outputs:
 
@@ -87,9 +92,34 @@ converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8,
 converter.representative_dataset = <...>
 ```
 
+### Step 3: add Metadata to the model
+
+To make it easier to use tflite models on mobile, you will need to add
+[metadata](https://www.tensorflow.org/lite/convert/metadata) to your model and
+also
+[pack](https://www.tensorflow.org/lite/convert/metadata#pack_metadata_and_associated_files_into_the_model)
+the associated labels file to it.
+If you need more information, This process is also explained in the
+[Image classification sample](https://github.com/tensorflow/examples/tree/master/lite/examples/image_classification/metadata)
+
 ## Running our model on Android
 
-To run our TensorFlow Lite model on device, we will use Android Studio to build
+### Integrate the model into your app
+You can use the TFLite Task Library's [ObjectDetector API](https://www.tensorflow.org/lite/inference_with_metadata/task_library/object_detector)
+to integrate the model into your Android app.
+
+```java
+// Initialization
+ObjectDetectorOptions options = ObjectDetectorOptions.builder().setMaxResults(1).build();
+ObjectDetector objectDetector = ObjectDetector.createFromFileAndOptions(context, modelFile, options);
+
+// Run inference
+List<Detection> results = objectDetector.detect(image);
+```
+
+### Test the model using the TFLite sample app
+
+To test our TensorFlow Lite model on device, we will use Android Studio to build
 and run the TensorFlow Lite detection example with the new model. The example is
 found in the
 [TensorFlow examples repository](https://github.com/tensorflow/examples) under
@@ -100,9 +130,9 @@ the
 that support API >= 21. Additional details are available on the
 [TensorFlow Lite example page](https://github.com/tensorflow/examples/tree/master/lite/examples/object_detection/android).
 
-Next we need to point the app to our new detect.tflite file and give it the
-names of our new labels. Specifically, we will copy our TensorFlow Lite
-flatbuffer to the app assets directory with the following command:
+Next we need to point the app to our new detect.tflite file . Specifically, we
+will copy our TensorFlow Lite flatbuffer to the app assets directory with the
+following command:
 
 ```shell
 mkdir $TF_EXAMPLES/lite/examples/object_detection/android/app/src/main/assets
@@ -110,31 +140,26 @@ cp /tmp/tflite/detect.tflite \
   $TF_EXAMPLES/lite/examples/object_detection/android/app/src/main/assets
 ```
 
-You will also need to copy your new labelmap labelmap.txt to the assets
-directory.
+It's important to notice that the labels file should be packed in the model (as
+mentioned on Step 3)
 
 We will now edit the gradle build file to use these assets. First, open the
 `build.gradle` file
 `$TF_EXAMPLES/lite/examples/object_detection/android/app/build.gradle`. Comment
-out the model download script to avoid your assets being overwritten:
+out the model download script to avoid your assets being overwritten: `// apply
+from:'download_model.gradle'` ```
+
+If your model is named `detect.tflite`, the example will use it automatically as
+long as they've been properly copied into the base assets directory. If you need
+to use a custom path or filename, open up the
+$TF_EXAMPLES/lite/examples/object_detection/android/app/src/main/java/org/tensorflow/demo/DetectorActivity.java
+file in a text editor and find the definition of TF_OD_API_MODEL_FILE. Note that
+if your model is quantized, the flag TF_OD_API_IS_QUANTIZED is set to true, and
+if your model is floating point, the flag TF_OD_API_IS_QUANTIZED is set to
+false. This new section of DetectorActivity.java should now look as follows for
+a quantized model:
 
 ```shell
-// apply from:'download_model.gradle'
-```
-
-If your model is named `detect.tflite`, and your labels file `labelmap.txt`, the
-example will use them automatically as long as they've been properly copied into
-the base assets directory. If you need to use a custom path or filename, open up
-the
-$TF_EXAMPLES/lite/examples/object_detection/android/app/src/main/java/org/tensorflow/demo/DetectorActivity.java
-file in a text editor and find the definition of TF_OD_API_LABELS_FILE. Update
-this path to point to your new label map file: "labels_list.txt". Note that if
-your model is quantized, the flag TF_OD_API_IS_QUANTIZED is set to true, and if
-your model is floating point, the flag TF_OD_API_IS_QUANTIZED is set to false.
-This new section of DetectorActivity.java should now look as follows for a
-quantized model:
-
-```java
   private static final boolean TF_OD_API_IS_QUANTIZED = true;
   private static final String TF_OD_API_MODEL_FILE = "detect.tflite";
   private static final String TF_OD_API_LABELS_FILE = "labels_list.txt";

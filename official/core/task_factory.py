@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -57,6 +57,9 @@ def register_task_cls(task_config_cls):
 
 def get_task(task_config, **kwargs):
   """Creates a Task (of suitable subclass type) from task_config."""
+  # TODO(hongkuny): deprecate the task factory to use config.BUILDER.
+  if task_config.BUILDER is not None:
+    return task_config.BUILDER(task_config, **kwargs)
   return get_task_cls(task_config.__class__)(task_config, **kwargs)
 
 

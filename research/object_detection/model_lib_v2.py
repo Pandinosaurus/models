@@ -20,11 +20,11 @@ from __future__ import print_function
 
 import copy
 import os
+import pprint
 import time
-import numpy as np
 
+import numpy as np
 import tensorflow.compat.v1 as tf
-import tensorflow.compat.v2 as tf2
 
 from object_detection import eval_util
 from object_detection import inputs
@@ -35,10 +35,13 @@ from object_detection.protos import train_pb2
 from object_detection.utils import config_util
 from object_detection.utils import label_map_util
 from object_detection.utils import ops
+from object_detection.utils import variables_helper
 from object_detection.utils import visualization_utils as vutils
 
 
 MODEL_BUILD_UTIL_MAP = model_lib.MODEL_BUILD_UTIL_MAP
+NUM_STEPS_PER_ITERATION = 100
+LOG_EVERY = 100
 
 
 RESTORE_MAP_ERROR_TEMPLATE = (
@@ -49,7 +52,7 @@ RESTORE_MAP_ERROR_TEMPLATE = (
 
 
 def _compute_losses_and_predictions_dicts(
-    model, features, labels,
+    model, features, labels, training_step=None,
     add_regularization_loss=True):
   """Computes the losses dict and predictions dict for a model on inputs.
 
@@ -85,6 +88,8 @@ def _compute_losses_and_predictions_dicts(
         labels[fields.InputDataFields.groundtruth_instance_masks] is a
           float32 tensor containing only binary values, which represent
           instance masks for objects.
+        labels[fields.InputDataFields.groundtruth_instance_mask_weights] is a
+          float32 tensor containing weights for the instance masks.
         labels[fields.InputDataFields.groundtruth_keypoints] is a
           float32 tensor containing keypoints for each box.
         labels[fields.InputDataFields.groundtruth_dp_num_points] is an int32
@@ -103,6 +108,7 @@ def _compute_losses_and_predictions_dicts(
           float32 tensor containing keypoint depths information.
         labels[fields.InputDataFields.groundtruth_keypoint_depth_weights] is a
           float32 tensor containing the weights of the keypoint depth feature.
+    training_step: int, the current training step.
     add_regularization_loss: Whether or not to include the model's
       regularization loss in the losses dictionary.
 
@@ -112,7 +118,7 @@ def _compute_losses_and_predictions_dicts(
     `model.predict`.
 
   """
-  model_lib.provide_groundtruth(model, labels)
+  model_lib.provide_groundtruth(model, labels, training_step=training_step)
   preprocessed_images = features[fields.InputDataFields.image]
 
   prediction_dict = model.predict(
@@ -162,7 +168,8 @@ def _ensure_model_is_built(model, input_dataset, unpad_groundtruth_tensors):
     labels = model_lib.unstack_batch(
         labels, unpad_groundtruth_tensors=unpad_groundtruth_tensors)
 
-    return _compute_losses_and_predictions_dicts(model, features, labels)
+    return _compute_losses_and_predictions_dicts(model, features, labels,
+                                                 training_step=0)
 
   strategy = tf.compat.v2.distribute.get_strategy()
   if hasattr(tf.distribute.Strategy, 'run'):
@@ -179,6 +186,22 @@ def _ensure_model_is_built(model, input_dataset, unpad_groundtruth_tensors):
         ))
 
 
+def normalize_dict(values_dict, num_replicas):
+
+  num_replicas = tf.constant(num_replicas, dtype=tf.float32)
+  return {key: tf.math.divide(loss, num_replicas) for key, loss
+          in values_dict.items()}
+
+
+def reduce_dict(strategy, reduction_dict, reduction_op):
+  # TODO(anjalisridhar): explore if it is safe to remove the # num_replicas
+  # scaling of the loss and switch this to a ReduceOp.Mean
+  return {
+      name: strategy.reduce(reduction_op, loss, axis=None)
+      for name, loss in reduction_dict.items()
+  }
+
+
 # TODO(kaftan): Explore removing learning_rate from this method & returning
 ## The full losses dict instead of just total_loss, then doing all summaries
 ## saving in a utility method called by the outer training loop.
@@ -188,10 +211,9 @@ def eager_train_step(detection_model,
                      labels,
                      unpad_groundtruth_tensors,
                      optimizer,
-                     learning_rate,
+                     training_step,
                      add_regularization_loss=True,
                      clip_gradients_value=None,
-                     global_step=None,
                      num_replicas=1.0):
   """Process a single training batch.
 
@@ -235,6 +257,9 @@ def eager_train_step(detection_model,
         labels[fields.InputDataFields.groundtruth_instance_masks] is a
           [batch_size, num_boxes, H, W] float32 tensor containing only binary
           values, which represent instance masks for objects.
+        labels[fields.InputDataFields.groundtruth_instance_mask_weights] is a
+          [batch_size, num_boxes] float32 tensor containing weights for the
+          instance masks.
         labels[fields.InputDataFields.groundtruth_keypoints] is a
           [batch_size, num_boxes, num_keypoints, 2] float32 tensor containing
           keypoints for each box.
@@ -259,16 +284,11 @@ def eager_train_step(detection_model,
           float32 tensor containing the weights of the keypoint depth feature.
     unpad_groundtruth_tensors: A parameter passed to unstack_batch.
     optimizer: The training optimizer that will update the variables.
-    learning_rate: The learning rate tensor for the current training step.
-      This is used only for TensorBoard logging purposes, it does not affect
-       model training.
+    training_step: int, the training step number.
     add_regularization_loss: Whether or not to include the model's
       regularization loss in the losses dictionary.
     clip_gradients_value: If this is present, clip the gradients global norm
       at this value using `tf.clip_by_global_norm`.
-    global_step: The current training step. Used for TensorBoard logging
-      purposes. This step is not updated by this function and must be
-      incremented separately.
     num_replicas: The number of replicas in the current distribution strategy.
       This is used to scale the total loss so that training in a distribution
       strategy works correctly.
@@ -287,33 +307,22 @@ def eager_train_step(detection_model,
 
   with tf.GradientTape() as tape:
     losses_dict, _ = _compute_losses_and_predictions_dicts(
-        detection_model, features, labels, add_regularization_loss)
+        detection_model, features, labels,
+        training_step=training_step,
+        add_regularization_loss=add_regularization_loss)
 
-    total_loss = losses_dict['Loss/total_loss']
-
-    # Normalize loss for num replicas
-    total_loss = tf.math.divide(total_loss,
-                                tf.constant(num_replicas, dtype=tf.float32))
-    losses_dict['Loss/normalized_total_loss'] = total_loss
-
-  for loss_type in losses_dict:
-    tf.compat.v2.summary.scalar(
-        loss_type, losses_dict[loss_type], step=global_step)
+    losses_dict = normalize_dict(losses_dict, num_replicas)
 
   trainable_variables = detection_model.trainable_variables
 
+  total_loss = losses_dict['Loss/total_loss']
   gradients = tape.gradient(total_loss, trainable_variables)
 
   if clip_gradients_value:
     gradients, _ = tf.clip_by_global_norm(gradients, clip_gradients_value)
   optimizer.apply_gradients(zip(gradients, trainable_variables))
-  tf.compat.v2.summary.scalar('learning_rate', learning_rate, step=global_step)
-  tf.compat.v2.summary.image(
-      name='train_input_images',
-      step=global_step,
-      data=features[fields.InputDataFields.image],
-      max_outputs=3)
-  return total_loss
+
+  return losses_dict
 
 
 def validate_tf_v2_checkpoint_restore_map(checkpoint_restore_map):
@@ -395,7 +404,8 @@ def load_fine_tune_checkpoint(model, checkpoint_path, checkpoint_type,
       fine_tune_checkpoint_type=checkpoint_type)
   validate_tf_v2_checkpoint_restore_map(restore_from_objects_dict)
   ckpt = tf.train.Checkpoint(**restore_from_objects_dict)
-  ckpt.restore(checkpoint_path).assert_existing_objects_matched()
+  ckpt.restore(
+      checkpoint_path).expect_partial().assert_existing_objects_matched()
 
 
 def get_filepath(strategy, filepath):
@@ -442,6 +452,7 @@ def train_loop(
     checkpoint_max_to_keep=7,
     record_summaries=True,
     performance_summary_exporter=None,
+    num_steps_per_iteration=NUM_STEPS_PER_ITERATION,
     **kwargs):
   """Trains a model using eager + functions.
 
@@ -471,8 +482,15 @@ def train_loop(
       Checkpoint every n training steps.
     checkpoint_max_to_keep:
       int, the number of most recent checkpoints to keep in the model directory.
-    record_summaries: Boolean, whether or not to record summaries.
+    record_summaries: Boolean, whether or not to record summaries defined by
+      the model or the training pipeline. This does not impact the summaries
+      of the loss values which are always recorded. Examples of summaries
+      that are controlled by this flag include:
+        - Image summaries of training images.
+        - Intermediate tensors which maybe logged by meta architectures.
     performance_summary_exporter: function for exporting performance metrics.
+    num_steps_per_iteration: int, The number of training steps to perform
+      in each iteration.
     **kwargs: Additional keyword arguments for configuration override.
   """
   ## Parse the configs
@@ -519,8 +537,7 @@ def train_loop(
 
   # Write the as-run pipeline config to disk.
   if save_final_config:
-    tf.logging.info('Saving pipeline config file to directory {}'.format(
-        model_dir))
+    tf.logging.info('Saving pipeline config file to directory %s', model_dir)
     pipeline_config_final = create_pipeline_proto_from_configs(configs)
     config_util.save_pipeline_config(pipeline_config_final, model_dir)
 
@@ -528,7 +545,8 @@ def train_loop(
   strategy = tf.compat.v2.distribute.get_strategy()
   with strategy.scope():
     detection_model = MODEL_BUILD_UTIL_MAP['detection_model_fn_base'](
-        model_config=model_config, is_training=True)
+        model_config=model_config, is_training=True,
+        add_summaries=record_summaries)
 
     def train_dataset_fn(input_context):
       """Callable to create train input."""
@@ -571,18 +589,9 @@ def train_loop(
   # is the chief.
   summary_writer_filepath = get_filepath(strategy,
                                          os.path.join(model_dir, 'train'))
-  if record_summaries:
-    summary_writer = tf.compat.v2.summary.create_file_writer(
-        summary_writer_filepath)
-  else:
-    summary_writer = tf2.summary.create_noop_writer()
 
-  if use_tpu:
-    num_steps_per_iteration = 100
-  else:
-    # TODO(b/135933080) Explore setting to 100 when GPU performance issues
-    # are fixed.
-    num_steps_per_iteration = 1
+  summary_writer = tf.compat.v2.summary.create_file_writer(
+      summary_writer_filepath)
 
   with summary_writer.as_default():
     with strategy.scope():
@@ -590,6 +599,9 @@ def train_loop(
           lambda: global_step % num_steps_per_iteration == 0):
         # Load a fine-tuning checkpoint.
         if train_config.fine_tune_checkpoint:
+          variables_helper.ensure_checkpoint_supported(
+              train_config.fine_tune_checkpoint, fine_tune_checkpoint_type,
+              model_dir)
           load_fine_tune_checkpoint(
               detection_model, train_config.fine_tune_checkpoint,
               fine_tune_checkpoint_type, fine_tune_checkpoint_version,
@@ -613,32 +625,38 @@ def train_loop(
 
         def train_step_fn(features, labels):
           """Single train step."""
-          loss = eager_train_step(
+
+          if record_summaries:
+            tf.compat.v2.summary.image(
+                name='train_input_images',
+                step=global_step,
+                data=features[fields.InputDataFields.image],
+                max_outputs=3)
+          losses_dict = eager_train_step(
               detection_model,
               features,
               labels,
               unpad_groundtruth_tensors,
               optimizer,
-              learning_rate=learning_rate_fn(),
+              training_step=global_step,
               add_regularization_loss=add_regularization_loss,
               clip_gradients_value=clip_gradients_value,
-              global_step=global_step,
               num_replicas=strategy.num_replicas_in_sync)
           global_step.assign_add(1)
-          return loss
+          return losses_dict
 
         def _sample_and_train(strategy, train_step_fn, data_iterator):
           features, labels = data_iterator.next()
           if hasattr(tf.distribute.Strategy, 'run'):
-            per_replica_losses = strategy.run(
+            per_replica_losses_dict = strategy.run(
                 train_step_fn, args=(features, labels))
           else:
-            per_replica_losses = strategy.experimental_run_v2(
-                train_step_fn, args=(features, labels))
-          # TODO(anjalisridhar): explore if it is safe to remove the
-          ## num_replicas scaling of the loss and switch this to a ReduceOp.Mean
-          return strategy.reduce(tf.distribute.ReduceOp.SUM,
-                                 per_replica_losses, axis=None)
+            per_replica_losses_dict = (
+                strategy.experimental_run_v2(
+                    train_step_fn, args=(features, labels)))
+
+          return reduce_dict(
+              strategy, per_replica_losses_dict, tf.distribute.ReduceOp.SUM)
 
         @tf.function
         def _dist_train_step(data_iterator):
@@ -664,7 +682,7 @@ def train_loop(
         for _ in range(global_step.value(), train_steps,
                        num_steps_per_iteration):
 
-          loss = _dist_train_step(train_input_iter)
+          losses_dict = _dist_train_step(train_input_iter)
 
           time_taken = time.time() - last_step_time
           last_step_time = time.time()
@@ -675,11 +693,19 @@ def train_loop(
 
           steps_per_sec_list.append(steps_per_sec)
 
-          if global_step.value() - logged_step >= 100:
+          logged_dict = losses_dict.copy()
+          logged_dict['learning_rate'] = learning_rate_fn()
+
+          for key, val in logged_dict.items():
+            tf.compat.v2.summary.scalar(key, val, step=global_step)
+
+          if global_step.value() - logged_step >= LOG_EVERY:
+            logged_dict_np = {name: value.numpy() for name, value in
+                              logged_dict.items()}
             tf.logging.info(
-                'Step {} per-step time {:.3f}s loss={:.3f}'.format(
-                    global_step.value(), time_taken / num_steps_per_iteration,
-                    loss))
+                'Step {} per-step time {:.3f}s'.format(
+                    global_step.value(), time_taken / num_steps_per_iteration))
+            tf.logging.info(pprint.pformat(logged_dict_np, width=40))
             logged_step = global_step.value()
 
           if ((int(global_step.value()) - checkpointed_step) >=
@@ -698,7 +724,7 @@ def train_loop(
         'steps_per_sec': np.mean(steps_per_sec_list),
         'steps_per_sec_p50': np.median(steps_per_sec_list),
         'steps_per_sec_max': max(steps_per_sec_list),
-        'last_batch_loss': float(loss)
+        'last_batch_loss': float(losses_dict['Loss/total_loss'])
     }
     mixed_precision = 'bf16' if kwargs['use_bfloat16'] else 'fp32'
     performance_summary_exporter(metrics, mixed_precision)
@@ -882,7 +908,8 @@ def eager_eval_loop(
         labels, unpad_groundtruth_tensors=unpad_groundtruth_tensors)
 
     losses_dict, prediction_dict = _compute_losses_and_predictions_dicts(
-        detection_model, features, labels, add_regularization_loss)
+        detection_model, features, labels, training_step=None,
+        add_regularization_loss=add_regularization_loss)
     prediction_dict = detection_model.postprocess(
         prediction_dict, features[fields.InputDataFields.true_image_shape])
     eval_features = {
@@ -1064,8 +1091,7 @@ def eval_continuously(
   configs = merge_external_params_with_configs(
       configs, None, kwargs_dict=kwargs)
   if model_dir and save_final_config:
-    tf.logging.info('Saving pipeline config file to directory {}'.format(
-        model_dir))
+    tf.logging.info('Saving pipeline config file to directory %s', model_dir)
     pipeline_config_final = create_pipeline_proto_from_configs(configs)
     config_util.save_pipeline_config(pipeline_config_final, model_dir)
 
@@ -1077,11 +1103,11 @@ def eval_continuously(
   eval_on_train_input_config.sample_1_of_n_examples = (
       sample_1_of_n_eval_on_train_examples)
   if override_eval_num_epochs and eval_on_train_input_config.num_epochs != 1:
-    tf.logging.warning('Expected number of evaluation epochs is 1, but '
-                       'instead encountered `eval_on_train_input_config'
-                       '.num_epochs` = '
-                       '{}. Overwriting `num_epochs` to 1.'.format(
-                           eval_on_train_input_config.num_epochs))
+    tf.logging.warning(
+        ('Expected number of evaluation epochs is 1, but '
+         'instead encountered `eval_on_train_input_config'
+         '.num_epochs` = %d. Overwriting `num_epochs` to 1.'),
+        eval_on_train_input_config.num_epochs)
     eval_on_train_input_config.num_epochs = 1
 
   if kwargs['use_bfloat16']:
@@ -1137,3 +1163,7 @@ def eval_continuously(
           postprocess_on_cpu=postprocess_on_cpu,
           global_step=global_step,
           )
+
+    if global_step.numpy() == configs['train_config'].num_steps:
+      tf.logging.info('Exiting evaluation at step %d', global_step.numpy())
+      return

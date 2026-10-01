@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ import tempfile
 import zipfile
 
 # pylint: disable=g-bad-import-order
-# Import libraries
 import numpy as np
 import pandas as pd
 import six
@@ -35,7 +34,7 @@ from six.moves import urllib  # pylint: disable=redefined-builtin
 from absl import app
 from absl import flags
 from absl import logging
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 # pylint: enable=g-bad-import-order
 
 from official.utils.flags import core as flags_core
@@ -49,7 +48,7 @@ RATINGS_FILE = "ratings.csv"
 MOVIES_FILE = "movies.csv"
 
 # URL to download dataset
-_DATA_URL = "http://files.grouplens.org/datasets/movielens/"
+_DATA_URL = "https://files.grouplens.org/datasets/movielens/"
 
 GENRE_COLUMN = "genres"
 ITEM_COLUMN = "item_id"  # movies

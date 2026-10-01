@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 """Create LM TF examples for XLNet."""
 
+import dataclasses
 import json
 import math
 import os
@@ -22,17 +23,14 @@ import random
 from typing import Iterable, Mapping, List, Optional, Tuple
 import unicodedata
 
-# Import libraries
-
 from absl import app
 from absl import flags
 from absl import logging
 
-import dataclasses
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
-from official.nlp.bert import tokenization
+from official.nlp.tools import tokenization
 
 special_symbols = {
     "<unk>": 0,
@@ -225,7 +223,7 @@ def preprocess_and_tokenize_input_files(
         continue
       total_number_of_lines += line_count
       all_tokens = np.array(all_tokens, dtype=np.int64)
-      all_sentence_ids = np.array(all_sentence_ids, dtype=np.bool)
+      all_sentence_ids = np.array(all_sentence_ids, dtype=bool)
       all_data.append((all_tokens, all_sentence_ids))
 
   logging.info("Completed text preprocessing. Total number of lines: %d",
@@ -271,7 +269,7 @@ def _create_a_and_b_segments(
   Args:
     tokens: The 1D input token ids. This represents an individual entry within a
       batch.
-    sentence_ids: The 1D input sentence ids. This represents an indivdual entry
+    sentence_ids: The 1D input sentence ids. This represents an individual entry
       within a batch. This should be the same length as `tokens`.
     begin_index: The reference beginning index to split data.
     total_length: The target combined length of segments A and B.

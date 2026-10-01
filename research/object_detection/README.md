@@ -3,6 +3,19 @@
 [![TensorFlow 1.15](https://img.shields.io/badge/TensorFlow-1.15-FF6F00?logo=tensorflow)](https://github.com/tensorflow/tensorflow/releases/tag/v1.15.0)
 [![Python 3.6](https://img.shields.io/badge/Python-3.6-3776AB)](https://www.python.org/downloads/release/python-360/)
 
+## Deprecation
+
+*Note to our users*: the Tensorflow Object Detection API is no longer being
+maintained to be compatible with new versions of external dependencies
+(from pip, apt-get etc.). Any changes that follow are meant for internal
+maintenance. We may use the OD API to release projects in the future,
+in which case we will provide full install instructions or Docker images.
+We encourage users seeking an actively maintained detection / segmentation
+codebase to consider [TF-Vision](https://github.com/tensorflow/models/tree/master/official/vision)
+or [scenic](https://github.com/google-research/scenic). We have preserved
+the original install instructions below in case anyone wants to try out old
+models or scripts.
+
 Creating accurate machine learning models capable of localizing and identifying
 multiple objects in a single image remains a core challenge in computer vision.
 The TensorFlow Object Detection API is an open source framework built on top of
@@ -10,8 +23,7 @@ TensorFlow that makes it easy to construct, train and deploy object detection
 models. At Google we’ve certainly found this codebase to be useful for our
 computer vision needs, and we hope that you will as well. <p align="center">
 <img src="g3doc/img/kites_detections_output.jpg" width=676 height=450> </p>
-Contributions to the codebase are welcome and we would love to hear back from
-you if you find this API useful. Finally if you use the TensorFlow Object
+If you use the TensorFlow Object
 Detection API for a research publication, please consider citing:
 
 ```
@@ -73,9 +85,26 @@ documentation of the Object Detection API:
 
 ## Whats New
 
+### SpaghettiNet for Edge TPU
+
+We have released SpaghettiNet models optimized for the Edge TPU in the [Google Tensor SoC](https://blog.google/products/pixel/google-tensor-debuts-new-pixel-6-fall/).
+
+SpaghettiNet models are derived from a TuNAS search space that incorporates
+group convolution based [Inverted Bottleneck](https://arxiv.org/abs/1801.04381) blocks.
+The backbone and detection head are connected through [MnasFPN](https://arxiv.org/abs/1912.01106)-style feature map
+merging and searched jointly.
+
+When compared to MobileDet-EdgeTPU, SpaghettiNet models achieve +2.2% mAP
+(absolute) on COCO17 at the same latency. They also consume <70% of the energy
+used by MobileDet-EdgeTPU to achieve the same accuracy.
+
+Sample config available [here](configs/tf1/ssd_spaghettinet_edgetpu_320x320_coco17_sync_4x4.config).
+
+<b>Thanks to contributors</b>: Marie White, Hao Xu, Hanxiao Liu and Suyog Gupta.
+
 ### DeepMAC architecture
 
-We have released our new architecture, **DeepMAC**, desgined for partially
+We have released our new architecture, **DeepMAC**, designed for partially
 supervised instance segmentation. DeepMAC stands for Deep Mask-heads
 Above CenterNet, and is based on our CenterNet implementation. In our
 [paper](https://arxiv.org/abs/2104.00613) we show that DeepMAC achieves

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ import functools
 import os
 
 import orbit
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from sentencepiece import SentencePieceTrainer
 from official.nlp.data import wmt_dataloader
@@ -85,7 +85,8 @@ class TranslationTaskTest(tf.test.TestCase):
   def test_task(self):
     config = translation.TranslationConfig(
         model=translation.ModelConfig(
-            encoder=translation.EncDecoder(), decoder=translation.EncDecoder()),
+            encoder=translation.EncDecoder(num_layers=1),
+            decoder=translation.EncDecoder(num_layers=1)),
         train_data=wmt_dataloader.WMTDataConfig(
             input_path=self._record_input_path,
             src_lang="en", tgt_lang="reverse_en",
@@ -96,13 +97,14 @@ class TranslationTaskTest(tf.test.TestCase):
     model = task.build_model()
     dataset = task.build_inputs(config.train_data)
     iterator = iter(dataset)
-    optimizer = tf.keras.optimizers.SGD(lr=0.1)
+    optimizer = tf_keras.optimizers.SGD(lr=0.1)
     task.train_step(next(iterator), model, optimizer)
 
   def test_no_sentencepiece_path(self):
     config = translation.TranslationConfig(
         model=translation.ModelConfig(
-            encoder=translation.EncDecoder(), decoder=translation.EncDecoder()),
+            encoder=translation.EncDecoder(num_layers=1),
+            decoder=translation.EncDecoder(num_layers=1)),
         train_data=wmt_dataloader.WMTDataConfig(
             input_path=self._record_input_path,
             src_lang="en", tgt_lang="reverse_en",
@@ -122,7 +124,8 @@ class TranslationTaskTest(tf.test.TestCase):
         sentencepeice_model_prefix)
     config = translation.TranslationConfig(
         model=translation.ModelConfig(
-            encoder=translation.EncDecoder(), decoder=translation.EncDecoder()),
+            encoder=translation.EncDecoder(num_layers=1),
+            decoder=translation.EncDecoder(num_layers=1)),
         train_data=wmt_dataloader.WMTDataConfig(
             input_path=self._record_input_path,
             src_lang="en", tgt_lang="reverse_en",
@@ -137,7 +140,8 @@ class TranslationTaskTest(tf.test.TestCase):
   def test_evaluation(self):
     config = translation.TranslationConfig(
         model=translation.ModelConfig(
-            encoder=translation.EncDecoder(), decoder=translation.EncDecoder(),
+            encoder=translation.EncDecoder(num_layers=1),
+            decoder=translation.EncDecoder(num_layers=1),
             padded_decode=False,
             decode_max_length=64),
         validation_data=wmt_dataloader.WMTDataConfig(

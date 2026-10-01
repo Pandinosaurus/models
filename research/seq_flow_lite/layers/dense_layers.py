@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-# Lint as: python3
 """Basic dense layers."""
+import copy
 import tensorflow as tf
 
 from layers import base_layers # import seq_flow_lite module
@@ -30,6 +30,8 @@ class BaseQDense(base_layers.BaseLayer):
                bias=True,
                rank=2,
                normalize=True,
+               quantize_output=True,
+               normalization_fn=None,
                **kwargs):
     self.units = units
     self.rank = rank
@@ -37,8 +39,10 @@ class BaseQDense(base_layers.BaseLayer):
     self.activation = activation
     self.bias = bias
     self.normalize = normalize
-    self.qoutput = quantization_layers.ActivationQuantization(**kwargs)
-    self._create_normalizer(**kwargs)
+    self.quantize_output = quantize_output
+    if quantize_output:
+      self.qoutput = quantization_layers.ActivationQuantization(**kwargs)
+    self._create_normalizer(normalization_fn=normalization_fn, **kwargs)
     super(BaseQDense, self).__init__(**kwargs)
 
   def build(self, input_shapes):
@@ -47,22 +51,28 @@ class BaseQDense(base_layers.BaseLayer):
       assert input_shapes[1] == 1 or input_shapes[2] == 1
     self.in_units = input_shapes[-1]
     shape = [self.in_units, self.units]
-    self.w = self.add_qweight(shape=shape)
+    self.w = self.add_weight_wrapper(shape=shape)
     if self.bias:
       self.b = self.add_bias(shape=[self.units])
 
-  def _create_normalizer(self, **kwargs):
-    self.normalization = normalization_layers.BatchNormalization(**kwargs)
+  def _create_normalizer(self, normalization_fn, **kwargs):
+    if normalization_fn is None:
+      self.normalization = normalization_layers.BatchNormalization(**kwargs)
+    else:
+      self.normalization = copy.deepcopy(normalization_fn)
 
   def _dense_r2(self, inputs, normalize_method):
-    outputs = tf.matmul(inputs, self.w)
+    outputs = tf.matmul(inputs, self.quantize_parameter(self.w))
     if self.bias:
       outputs = tf.nn.bias_add(outputs, self.b)
     if self.normalize:
       outputs = normalize_method(outputs)
     if self.activation:
       outputs = self.activation(outputs)
-    return self.qoutput(outputs)
+    if self.quantize_output:
+      return self.qoutput(outputs)
+    else:
+      return outputs
 
   def _dense_r34(self, inputs, normalize_method):
     bsz = self.get_batch_dimension(inputs)
@@ -94,11 +104,16 @@ class BaseQDense(base_layers.BaseLayer):
 class BaseQDenseVarLen(BaseQDense):
   """Dense on variable length sequence."""
 
-  def _create_normalizer(self, **kwargs):
-    self.normalization = normalization_layers.VarLenBatchNormalization(
-        rank=2, **kwargs)
+  def _create_normalizer(self, normalization_fn, **kwargs):
+    if normalization_fn is None:
+      self.normalization = normalization_layers.VarLenBatchNormalization(
+          rank=2, **kwargs)
+    else:
+      self.normalization = copy.deepcopy(normalization_fn)
 
-  def call(self, inputs, mask, inverse_normalizer):
+  def call(self, inputs, mask, inverse_normalizer=None):
+    if inverse_normalizer is None:
+      inverse_normalizer = self.inverse_normalizer(mask)
 
     def normalize_method(tensor):
       maskr2 = tf.reshape(mask, [-1, 1])

@@ -20,30 +20,6 @@ limitations under the License.
 
 using ::tensorflow::int32;
 
-class PoolingOp : public tensorflow::OpKernel {
- public:
-  explicit PoolingOp(tensorflow::OpKernelConstruction* context)
-      : tensorflow::OpKernel(context) {}
-
-  void Compute(tensorflow::OpKernelContext* ctx) override {}
-};
-
-REGISTER_KERNEL_BUILDER(Name("PoolingOp").Device(::tensorflow::DEVICE_CPU),
-                        PoolingOp);
-
-REGISTER_OP("PoolingOp")
-    .Input("multiplier: float32")
-    .Input("constant: float32")
-    .Input("forward: float32")
-    .Output("state: float32")
-    .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
-      c->set_output(0, c->input(0));
-      return tensorflow::Status::OK();
-    })
-    .Doc(R"doc(
-Dummy pooling op.
-)doc");
-
 class ExpectedValueOp : public tensorflow::OpKernel {
  public:
   explicit ExpectedValueOp(tensorflow::OpKernelConstruction* context)
@@ -63,7 +39,7 @@ REGISTER_OP("ExpectedValueOp")
       auto batch_size = c->Dim(c->input(0), 0);
       auto feature_size = c->Dim(c->input(0), 2);
       c->set_output(0, c->MakeShape({batch_size, feature_size}));
-      return tensorflow::Status::OK();
+      return tensorflow::OkStatus();
     })
     .Doc(R"doc(
 Dummy pooling op.
@@ -88,10 +64,34 @@ REGISTER_OP("LayerNorm")
     .Output("result: float32")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
       c->set_output(0, c->input(0));
-      return tensorflow::Status::OK();
+      return tensorflow::OkStatus();
     })
     .Doc(R"doc(
 Dummy layer norm op.
+)doc");
+
+class PoolingOp : public tensorflow::OpKernel {
+ public:
+  explicit PoolingOp(tensorflow::OpKernelConstruction* context)
+      : tensorflow::OpKernel(context) {}
+
+  void Compute(tensorflow::OpKernelContext* ctx) override {}
+};
+
+REGISTER_KERNEL_BUILDER(Name("PoolingOp").Device(::tensorflow::DEVICE_CPU),
+                        PoolingOp);
+
+REGISTER_OP("PoolingOp")
+    .Input("multiplier: float32")
+    .Input("constant: float32")
+    .Input("forward: float32")
+    .Output("state: float32")
+    .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
+      c->set_output(0, c->input(0));
+      return tensorflow::OkStatus();
+    })
+    .Doc(R"doc(
+Dummy pooling op.
 )doc");
 
 class UniformCausalAttnOp : public tensorflow::OpKernel {
@@ -118,7 +118,7 @@ REGISTER_OP("UniformCausalAttn")
       int32 feature_size;
       TF_RETURN_IF_ERROR(c->GetAttr("feature_size", &feature_size));
       c->set_output(0, c->MakeShape({batch_size, 1, feature_size}));
-      return tensorflow::Status::OK();
+      return tensorflow::OkStatus();
     })
     .Doc(R"doc(
 Dummy uniform causal attn op.

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2026 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ import os
 
 from absl.testing import parameterized
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf, tf_keras
 
 from official.nlp.configs import bert
 from official.nlp.configs import encoders
@@ -32,10 +32,12 @@ def _create_fake_dataset(output_path, seq_length, num_classes, num_examples):
   writer = tf.io.TFRecordWriter(output_path)
 
   def create_int_feature(values):
-    return tf.train.Feature(int64_list=tf.train.Int64List(value=list(values)))
+    return tf.train.Feature(
+        int64_list=tf.train.Int64List(value=np.ravel(values)))
 
   def create_float_feature(values):
-    return tf.train.Feature(float_list=tf.train.FloatList(value=list(values)))
+    return tf.train.Feature(
+        float_list=tf.train.FloatList(value=np.ravel(values)))
 
   for i in range(num_examples):
     features = {}
@@ -81,7 +83,7 @@ class SentencePredictionTaskTest(tf.test.TestCase, parameterized.TestCase):
         functools.partial(task.build_inputs, config.train_data))
 
     iterator = iter(dataset)
-    optimizer = tf.keras.optimizers.SGD(lr=0.1)
+    optimizer = tf_keras.optimizers.SGD(learning_rate=0.1)
     task.train_step(next(iterator), model, optimizer, metrics=metrics)
     model.save(os.path.join(self.get_temp_dir(), "saved_model"))
     return task.validation_step(next(iterator), model, metrics=metrics)
@@ -118,7 +120,7 @@ class SentencePredictionTaskTest(tf.test.TestCase, parameterized.TestCase):
     dataset = task.build_inputs(config.train_data)
 
     iterator = iter(dataset)
-    optimizer = tf.keras.optimizers.SGD(lr=0.1)
+    optimizer = tf_keras.optimizers.SGD(learning_rate=0.1)
     task.initialize(model)
     task.train_step(next(iterator), model, optimizer, metrics=metrics)
     task.validation_step(next(iterator), model, metrics=metrics)
@@ -142,14 +144,14 @@ class SentencePredictionTaskTest(tf.test.TestCase, parameterized.TestCase):
     model = task.build_model()
     metrics = task.build_metrics()
     if num_classes == 1:
-      self.assertIsInstance(metrics[0], tf.keras.metrics.MeanSquaredError)
+      self.assertIsInstance(metrics[0], tf_keras.metrics.MeanSquaredError)
     else:
       self.assertIsInstance(metrics[0],
-                            tf.keras.metrics.SparseCategoricalAccuracy)
+                            tf_keras.metrics.SparseCategoricalAccuracy)
 
     dataset = task.build_inputs(config.train_data)
     iterator = iter(dataset)
-    optimizer = tf.keras.optimizers.SGD(lr=0.1)
+    optimizer = tf_keras.optimizers.SGD(learning_rate=0.1)
     task.train_step(next(iterator), model, optimizer, metrics=metrics)
 
     logs = task.validation_step(next(iterator), model, metrics=metrics)
@@ -159,8 +161,26 @@ class SentencePredictionTaskTest(tf.test.TestCase, parameterized.TestCase):
     else:
       self.assertLess(loss, 1.0)
 
+  def test_build_losses_broadcasting_regression(self):
+    config = sentence_prediction.SentencePredictionConfig(
+        init_checkpoint=self.get_temp_dir(),
+        model=self.get_model_config(num_classes=1),
+        train_data=self._train_data_config,
+    )
+    task = sentence_prediction.SentencePredictionTask(config)
+
+    labels = {"label_ids": tf.constant([1.0, 2.0], dtype=tf.float32)}
+    model_outputs = tf.constant([[1.0], [4.0]], dtype=tf.float32)
+
+    loss = task.build_losses(labels, model_outputs)
+    # True MSE between [1.0, 2.0] and [[1.0], [4.0]] is (0^2 + 2^2) / 2 = 2.0.
+    # Without the reshape fix, Keras broadcasting results in an incorrect loss
+    # of 3.5.
+    self.assertAllClose(loss, 2.0)
+
   @parameterized.parameters(("matthews_corrcoef", 2),
-                            ("pearson_spearman_corr", 1))
+                            ("pearson_spearman_corr", 1),
+                            ("f1", 2))
   def test_np_metrics(self, metric_type, num_classes):
     config = sentence_prediction.SentencePredictionConfig(
         metric_type=metric_type,
@@ -216,7 +236,7 @@ class SentencePredictionTaskTest(tf.test.TestCase, parameterized.TestCase):
             bert=encoders.BertEncoderConfig(vocab_size=30522, num_layers=1)))
     encoder_inputs_dict = {x.name: x for x in encoder.inputs}
     encoder_output_dict = encoder(encoder_inputs_dict)
-    core_model = tf.keras.Model(
+    core_model = tf_keras.Model(
         inputs=encoder_inputs_dict, outputs=encoder_output_dict)
     hub_destination = os.path.join(self.get_temp_dir(), "hub")
     core_model.save(hub_destination, include_optimizer=False, save_format="tf")
